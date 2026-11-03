@@ -35,6 +35,8 @@ if (is_file($composerAutoload)) {
 use SyncOps\Core\Db;
 use SyncOps\Core\Secret;
 use SyncOps\Integration\IntegrationRepository;
+use SyncOps\Source\VCenter\Client\ClientFactory;
+use SyncOps\Source\VCenter\ConnectionTester;
 use SyncOps\Web\Auth;
 use SyncOps\Web\Controller\AuthController;
 use SyncOps\Web\Controller\DashboardController;
@@ -89,8 +91,10 @@ try {
         $pdo   = Db::connect($config['db'], retries: 2);
         $repo  = new IntegrationRepository($pdo, new Secret($config['secret_key']));
 
+        $tester = new ConnectionTester($repo, new ClientFactory());
+
         $dashboard   = new DashboardController($pdo, $repo, $view);
-        $integration = new IntegrationController($repo, $view, $auth, $flash);
+        $integration = new IntegrationController($repo, $view, $auth, $flash, $tester);
 
         $router->get('/', $dashboard->index(...));
 
@@ -99,6 +103,7 @@ try {
         $router->post('/integrations', $integration->create(...));
         $router->get('/integrations/{id}/edit', $integration->editForm(...));
         $router->post('/integrations/{id}', $integration->update(...));
+        $router->post('/integrations/{id}/test', $integration->test(...));
         $router->post('/integrations/{id}/state', $integration->toggle(...));
     }
 
