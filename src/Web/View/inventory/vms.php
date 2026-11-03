@@ -98,6 +98,8 @@ $hwVersion = static fn (?string $v): string => $v === null
 
     <div class="filter-actions">
         <button type="submit" class="btn btn-primary">Primeni</button>
+        <a href="/vms/export<?= $_GET === [] ? '' : '?' . $e(http_build_query(array_diff_key($_GET, ['page' => 1]))) ?>"
+           class="btn">Izvezi CSV</a>
     </div>
 </form>
 
