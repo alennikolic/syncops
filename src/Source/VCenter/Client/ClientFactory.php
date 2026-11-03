@@ -13,12 +13,16 @@ namespace SyncOps\Source\VCenter\Client;
 
 use SensitiveParameter;
 use SyncOps\Integration\Integration;
+use SyncOps\Source\VCenter\Client\Soap\SoapHardwareClient;
+use SyncOps\Source\VCenter\Client\Soap\SoapTransport;
 use SyncOps\Source\VCenter\VCenterException;
 
 class ClientFactory
 {
     public function __construct(
         private readonly int $timeout = 30,
+        /** Da li uz REST ide i SOAP, za hardverske podatke o hostovima. */
+        private readonly bool $withHardware = true,
     ) {
     }
 
@@ -32,11 +36,21 @@ class ClientFactory
     ): ClientInterface {
         $transport = $this->transport($integration);
 
-        return match ($flavor) {
+        $rest = match ($flavor) {
             Integration::FLAVOR_API_V2 => new RestClient($transport, $integration->username, $password),
             Integration::FLAVOR_REST_LEGACY => new RestLegacyClient($transport, $integration->username, $password),
             default => throw new VCenterException("Nepoznat dijalekt API-ja: {$flavor}"),
         };
+
+        if (!$this->withHardware) {
+            return $rest;
+        }
+
+        return new HardwareAwareClient($rest, new SoapHardwareClient(
+            $this->soapTransport($integration),
+            $integration->username,
+            $password,
+        ));
     }
 
     /**
@@ -53,6 +67,21 @@ class ClientFactory
             verifyPeer: $integration->verifyPeer,
             host: $integration->hostname,
             timeout: $this->timeout,
+        );
+    }
+
+    /**
+     * SOAP transport za istu integraciju. Izdvojeno zbog testiranja, isto kao
+     * i transport().
+     */
+    protected function soapTransport(Integration $integration): SoapTransport
+    {
+        return new SoapTransport(
+            baseUrl: $integration->baseUrl(),
+            verifyPeer: $integration->verifyPeer,
+            host: $integration->hostname,
+            // Jedan RetrievePropertiesEx nad velikim inventarom ume da potraje.
+            timeout: max(120, $this->timeout),
         );
     }
 
