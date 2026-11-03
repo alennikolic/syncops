@@ -41,6 +41,9 @@ use SyncOps\Web\Auth;
 use SyncOps\Web\Controller\AuthController;
 use SyncOps\Web\Controller\DashboardController;
 use SyncOps\Web\Controller\IntegrationController;
+use SyncOps\Web\Controller\InventoryController;
+use SyncOps\Web\Controller\RunController;
+use SyncOps\Storage\InventoryQuery;
 use SyncOps\Web\Flash;
 use SyncOps\Web\Router;
 use SyncOps\Web\View;
@@ -95,8 +98,16 @@ try {
 
         $dashboard   = new DashboardController($pdo, $repo, $view);
         $integration = new IntegrationController($repo, $view, $auth, $flash, $tester);
+        $inventory   = new InventoryController(new InventoryQuery($pdo), $view);
+        $runs        = new RunController($pdo, $view);
 
         $router->get('/', $dashboard->index(...));
+
+        $router->get('/vms', $inventory->vms(...));
+        $router->get('/vms/{id}', $inventory->vm(...));
+        $router->get('/hosts', $inventory->hosts(...));
+        $router->get('/clusters', $inventory->clusters(...));
+        $router->get('/runs', $runs->index(...));
 
         $router->get('/integrations', $integration->index(...));
         $router->get('/integrations/new', $integration->createForm(...));
