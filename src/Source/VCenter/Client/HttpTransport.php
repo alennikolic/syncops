@@ -43,6 +43,11 @@ final class HttpTransport
      *        lista, a ne mapa, jer /api dijalekt ponavlja isti naziv za nizove.
      * @param array<string, string> $headers
      * @param array{0: string, 1: string}|null $basicAuth
+     * @param list<int> $finalStatuses Statusi koji su konacan odgovor i NE SMEJU
+     *        da se ponavljaju, iako su inace u listi za ponavljanje. Primer:
+     *        guest/identity vraca 503 kada VMware Tools ne rade — to je trajno
+     *        stanje masine, ne privremeno preopterecenje servera, pa bi
+     *        ponavljanje samo trosilo po tri sekunde na svaku takvu masinu.
      */
     public function request(
         string $method,
@@ -51,6 +56,7 @@ final class HttpTransport
         array $headers = [],
         ?string $body = null,
         #[SensitiveParameter] ?array $basicAuth = null,
+        array $finalStatuses = [],
     ): Response {
         $url = $this->baseUrl . $path;
 
@@ -70,8 +76,13 @@ final class HttpTransport
 
             $response = $this->send($method, $url, $headers, $body, $basicAuth, $lastError);
 
-            if ($response !== null && !in_array($response->status, self::RETRYABLE, true)) {
-                return $response;
+            if ($response !== null) {
+                $retryable = in_array($response->status, self::RETRYABLE, true)
+                    && !in_array($response->status, $finalStatuses, true);
+
+                if (!$retryable) {
+                    return $response;
+                }
             }
 
             if ($attempt > $this->retries) {
