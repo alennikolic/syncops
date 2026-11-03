@@ -33,9 +33,21 @@ final class InventoryController
         ]);
     }
 
+    /**
+     * @return array<string, string>
+     */
+    private function hostFilters(): array
+    {
+        return [
+            'search'  => trim((string) ($_GET['q'] ?? '')),
+            'state'   => (string) ($_GET['state'] ?? ''),
+            'cluster' => (string) ($_GET['cluster'] ?? ''),
+        ];
+    }
+
     public function hosts(): void
     {
-        $filters = ['search' => trim((string) ($_GET['q'] ?? ''))];
+        $filters = $this->hostFilters();
         $result  = $this->query->hosts($filters, (int) ($_GET['page'] ?? 1));
 
         $this->view->render('inventory/hosts', [
@@ -43,8 +55,92 @@ final class InventoryController
             'nav'      => 'hosts',
             'result'   => $result,
             'filters'  => $filters,
+            'options'  => $this->query->hostFilterOptions(),
             'lastRuns' => $this->query->lastSuccessfulRuns(),
         ]);
+    }
+
+    public function host(string $id): void
+    {
+        $host = $this->query->host((int) $id);
+
+        if ($host === null) {
+            http_response_code(404);
+            header('Location: /hosts');
+
+            return;
+        }
+
+        $this->view->render('inventory/host', [
+            'title'    => (string) $host['name'],
+            'nav'      => 'hosts',
+            'host'     => $host,
+            'vms'      => $this->query->vmsOnHost((int) $host['integration_id'], (string) $host['moref']),
+            'changes'  => $this->query->hostChanges((int) $host['id']),
+            'lastRuns' => $this->query->lastSuccessfulRuns(),
+        ]);
+    }
+
+    /**
+     * Izvoz hostova u CSV, isti princip kao kod masina: uslovi sa ekrana,
+     * bez stranicenja, mere u osnovnim jedinicama.
+     */
+    public function exportHosts(): void
+    {
+        $filters  = $this->hostFilters();
+        $lastRuns = $this->query->lastSuccessfulRuns();
+
+        $header = [
+            'integracija', 'moref', 'ime',
+            'stanje_veze', 'napajanje',
+            'klaster', 'datacentar', 'broj_masina',
+            'izvor_hardvera', 'proizvodjac', 'model',
+            'serijski_broj', 'inventarski_broj', 'hardverski_uuid',
+            'cpu_model', 'cpu_soketa', 'cpu_jezgara', 'cpu_niti', 'cpu_mhz',
+            'memorija_bajtova',
+            'esxi_verzija', 'esxi_build', 'bios_verzija',
+            'prvi_put_vidjeno_utc', 'poslednji_put_vidjeno_utc',
+            'poslednji_run', 'nije_u_poslednjem_runu',
+        ];
+
+        $rows = (function () use ($filters, $lastRuns): iterable {
+            foreach ($this->query->hostsForExport($filters) as $host) {
+                $lastRun = $lastRuns[(int) $host['integration_id']] ?? null;
+                $missing = $lastRun !== null && (int) $host['last_run_id'] < $lastRun;
+
+                yield [
+                    $host['integration_name'],
+                    $host['moref'],
+                    $host['name'],
+                    $host['connection_state'],
+                    $host['power_state'],
+                    $host['cluster_name'] ?? $host['cluster_moref'],
+                    $host['datacenter_moref'],
+                    $host['vm_count'],
+                    $host['hardware_source'],
+                    $host['vendor'],
+                    $host['model'],
+                    $host['serial_number'],
+                    $host['asset_tag'],
+                    $host['hardware_uuid'],
+                    $host['cpu_model'],
+                    $host['cpu_sockets'],
+                    $host['cpu_cores'],
+                    $host['cpu_threads'],
+                    $host['cpu_mhz'],
+                    $host['memory_bytes'],
+                    $host['esxi_version'],
+                    $host['esxi_build'],
+                    $host['bios_version'],
+                    $host['first_seen'],
+                    $host['last_seen'],
+                    $host['last_run_id'],
+                    $missing ? 'da' : 'ne',
+                ];
+            }
+        })();
+
+        $this->csv->send('syncops-hostovi-' . gmdate('Y-m-d-Hi') . '.csv', $header, $rows);
     }
 
     /**
