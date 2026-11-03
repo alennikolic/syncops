@@ -52,6 +52,7 @@ final class InventoryController
             'power'   => (string) ($_GET['power'] ?? ''),
             'guest'   => (string) ($_GET['guest'] ?? ''),
             'cluster' => (string) ($_GET['cluster'] ?? ''),
+            'host'    => (string) ($_GET['host'] ?? ''),
         ];
 
         $result = $this->query->vms($filters, (int) ($_GET['page'] ?? 1));
