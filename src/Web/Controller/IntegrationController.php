@@ -1,267 +1,380 @@
 <?php
-// src/Web/Controller/InventoryController.php
+// src/Web/Controller/IntegrationController.php
 //
-// Prikaz prikupljenih podataka: klasteri, hostovi, masine i detalji masine.
-//
-// Sve stranice dobijaju mapu poslednjih uspesnih run-ova, da bi mogle da
-// oznace objekat koji u njemu nije vidjen.
+// CRUD nad integracijama. Brisanja nema — samo iskljucivanje, u skladu sa
+// ON DELETE RESTRICT iz seme: integracija sa istorijom se ne brise.
 
 declare(strict_types=1);
 
 namespace SyncOps\Web\Controller;
 
-use SyncOps\Storage\InventoryQuery;
-use SyncOps\Web\CsvExport;
+use SyncOps\Integration\Integration;
+use SyncOps\Integration\IntegrationRepository;
+use SyncOps\Run\DiscoveryRunner;
+use SyncOps\Run\RunStatus;
+use SyncOps\Source\VCenter\ConnectionTester;
+use SyncOps\Web\Auth;
+use SyncOps\Web\Flash;
 use SyncOps\Web\View;
+use Throwable;
 
-final class InventoryController
+final class IntegrationController
 {
+    private const FLAVORS = [
+        Integration::FLAVOR_AUTO        => 'Prepoznaj sam',
+        Integration::FLAVOR_API_V2      => '/api — vSphere 7.0 U2 i noviji',
+        Integration::FLAVOR_REST_LEGACY => '/rest — vSphere 6.7 do 7.0',
+    ];
+
     public function __construct(
-        private readonly InventoryQuery $query,
+        private readonly IntegrationRepository $repo,
         private readonly View $view,
-        private readonly CsvExport $csv = new CsvExport(),
+        private readonly Auth $auth,
+        private readonly Flash $flash,
+        private readonly ConnectionTester $tester,
+        private readonly DiscoveryRunner $runner,
     ) {
     }
 
-    public function clusters(): void
+    // -----------------------------------------------------------------
+
+    public function index(): void
     {
-        $this->view->render('inventory/clusters', [
-            'title'    => 'Klasteri',
-            'nav'      => 'clusters',
-            'clusters' => $this->query->clusters(),
-            'lastRuns' => $this->query->lastSuccessfulRuns(),
+        $this->view->render('integration/index', [
+            'title'        => 'Integracije',
+            'nav'          => 'integrations',
+            'integrations' => $this->repo->all(),
+            'csrf'         => $this->auth->csrfToken(),
         ]);
+    }
+
+    public function createForm(): void
+    {
+        $this->form(null, [], []);
+    }
+
+    public function editForm(string $id): void
+    {
+        $integration = $this->repo->find((int) $id);
+
+        if ($integration === null) {
+            $this->notFound();
+
+            return;
+        }
+
+        $this->form($integration, [], []);
+    }
+
+    // -----------------------------------------------------------------
+
+    public function create(): void
+    {
+        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
+            $this->flash->error('Sesija je istekla. Pokusaj ponovo.');
+            header('Location: /integrations/new');
+
+            return;
+        }
+
+        $input  = $this->input();
+        $errors = $this->validate($input, requirePassword: true);
+
+        if ($errors !== []) {
+            $this->form(null, $input, $errors);
+
+            return;
+        }
+
+        try {
+            $id = $this->repo->create(
+                name:       $input['name'],
+                hostname:   $input['hostname'],
+                username:   $input['username'],
+                password:   $input['password'],
+                port:       (int) $input['port'],
+                apiFlavor:  $input['api_flavor'],
+                verifyPeer: $input['verify_peer'] === '1',
+            );
+        } catch (Throwable $e) {
+            $this->form(null, $input, [$e->getMessage()]);
+
+            return;
+        }
+
+        $this->flash->success("Integracija „{$input['name']}” je dodata. Proveri konekciju da bi se prepoznala verzija API-ja.");
+        header('Location: /integrations');
+        unset($id);
+    }
+
+    public function update(string $id): void
+    {
+        $integration = $this->repo->find((int) $id);
+
+        if ($integration === null) {
+            $this->notFound();
+
+            return;
+        }
+
+        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
+            $this->flash->error('Sesija je istekla. Pokusaj ponovo.');
+            header('Location: /integrations/' . $integration->id . '/edit');
+
+            return;
+        }
+
+        $input  = $this->input();
+        $errors = $this->validate($input, requirePassword: false);
+
+        if ($errors !== []) {
+            $this->form($integration, $input, $errors);
+
+            return;
+        }
+
+        try {
+            $this->repo->update(
+                id:         $integration->id,
+                name:       $input['name'],
+                hostname:   $input['hostname'],
+                port:       (int) $input['port'],
+                username:   $input['username'],
+                apiFlavor:  $input['api_flavor'],
+                verifyPeer: $input['verify_peer'] === '1',
+            );
+
+            // Prazno polje znaci "ostavi postojecu lozinku".
+            if ($input['password'] !== '') {
+                $this->repo->updatePassword($integration->id, $input['password']);
+            }
+        } catch (Throwable $e) {
+            $this->form($integration, $input, [$e->getMessage()]);
+
+            return;
+        }
+
+        $this->flash->success('Izmene su sačuvane.');
+        header('Location: /integrations');
+    }
+
+    /**
+     * Provera konekcije. Traje nekoliko sekundi, pa se radi sinhrono — za
+     * razliku od discovery-ja, koji ide kroz CLI worker jer ume da traje
+     * minutima i probije ogranicenje trajanja web zahteva.
+     */
+    public function test(string $id): void
+    {
+        $integration = $this->repo->find((int) $id);
+
+        if ($integration === null) {
+            $this->notFound();
+
+            return;
+        }
+
+        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
+            $this->flash->error('Sesija je istekla. Pokusaj ponovo.');
+            header('Location: /integrations');
+
+            return;
+        }
+
+        $result = $this->tester->test($integration);
+
+        if ($result->ok) {
+            $this->flash->success(sprintf(
+                'Veza sa „%s” radi (%s%s). Pronađeno — %s',
+                $integration->name,
+                $result->flavor === Integration::FLAVOR_API_V2 ? '/api' : '/rest',
+                $result->productVersion !== null ? ' ' . $result->productVersion : '',
+                $result->message
+            ));
+        } else {
+            $this->flash->error(sprintf(
+                'Veza sa „%s” ne radi: %s',
+                $integration->name,
+                $result->message
+            ));
+        }
+
+        header('Location: /integrations');
+    }
+
+    /**
+     * Stavi prikupljanje u red cekanja.
+     *
+     * Ne izvrsava se ovde: na vecem vCenteru prikupljanje traje minutima i
+     * probilo bi ogranicenje trajanja web zahteva. Posao preuzima worker.
+     */
+    public function discover(string $id): void
+    {
+        $integration = $this->repo->find((int) $id);
+
+        if ($integration === null) {
+            $this->notFound();
+
+            return;
+        }
+
+        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
+            $this->flash->error('Sesija je istekla. Pokusaj ponovo.');
+            header('Location: /integrations');
+
+            return;
+        }
+
+        if (!$integration->isActive) {
+            $this->flash->error("Integracija „{$integration->name}” je isključena. Uključi je pa pokušaj ponovo.");
+            header('Location: /integrations');
+
+            return;
+        }
+
+        try {
+            $runId = $this->runner->enqueue($integration, RunStatus::TRIGGER_GUI);
+
+            $this->flash->success(sprintf(
+                'Prikupljanje za „%s” je u redu čekanja kao posao #%d. Preuzeće ga worker.',
+                $integration->name,
+                $runId
+            ));
+
+            header('Location: /runs');
+        } catch (Throwable $e) {
+            $this->flash->error($e->getMessage());
+            header('Location: /integrations');
+        }
+    }
+
+    public function toggle(string $id): void
+    {
+        $integration = $this->repo->find((int) $id);
+
+        if ($integration === null) {
+            $this->notFound();
+
+            return;
+        }
+
+        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
+            $this->flash->error('Sesija je istekla. Pokusaj ponovo.');
+            header('Location: /integrations');
+
+            return;
+        }
+
+        $this->repo->setActive($integration->id, !$integration->isActive);
+
+        $this->flash->success(sprintf(
+            'Integracija „%s” je %s.',
+            $integration->name,
+            $integration->isActive ? 'isključena' : 'uključena'
+        ));
+
+        header('Location: /integrations');
+    }
+
+    // -----------------------------------------------------------------
+
+    /**
+     * @param array<string, string> $input
+     * @param list<string> $errors
+     */
+    private function form(?Integration $integration, array $input, array $errors): void
+    {
+        $this->view->render('integration/form', [
+            'title'       => $integration === null ? 'Nova integracija' : 'Izmena integracije',
+            'nav'         => 'integrations',
+            'integration' => $integration,
+            'flavors'     => self::FLAVORS,
+            'errors'      => $errors,
+            'csrf'        => $this->auth->csrfToken(),
+            'value'       => $this->values($integration, $input),
+        ]);
+    }
+
+    /**
+     * Vrednosti za polja forme: prednost ima ono sto je korisnik upravo uneo,
+     * pa postojeci zapis, pa podrazumevano.
+     *
+     * @param array<string, string> $input
+     * @return array<string, string>
+     */
+    private function values(?Integration $integration, array $input): array
+    {
+        return [
+            'name'        => $input['name']        ?? $integration?->name       ?? '',
+            'hostname'    => $input['hostname']    ?? $integration?->hostname   ?? '',
+            'port'        => $input['port']        ?? (string) ($integration?->port ?? 443),
+            'username'    => $input['username']    ?? $integration?->username   ?? '',
+            'api_flavor'  => $input['api_flavor']  ?? $integration?->apiFlavor  ?? Integration::FLAVOR_AUTO,
+            'verify_peer' => $input['verify_peer'] ?? (($integration?->verifyPeer ?? false) ? '1' : '0'),
+        ];
     }
 
     /**
      * @return array<string, string>
      */
-    private function hostFilters(): array
+    private function input(): array
     {
         return [
-            'search'  => trim((string) ($_GET['q'] ?? '')),
-            'state'   => (string) ($_GET['state'] ?? ''),
-            'cluster' => (string) ($_GET['cluster'] ?? ''),
+            'name'        => trim((string) ($_POST['name'] ?? '')),
+            'hostname'    => trim((string) ($_POST['hostname'] ?? '')),
+            'port'        => trim((string) ($_POST['port'] ?? '443')),
+            'username'    => trim((string) ($_POST['username'] ?? '')),
+            'password'    => (string) ($_POST['password'] ?? ''),
+            'api_flavor'  => (string) ($_POST['api_flavor'] ?? Integration::FLAVOR_AUTO),
+            'verify_peer' => ($_POST['verify_peer'] ?? '') === '1' ? '1' : '0',
         ];
     }
 
-    public function hosts(): void
+    /**
+     * @param array<string, string> $input
+     * @return list<string>
+     */
+    private function validate(array $input, bool $requirePassword): array
     {
-        $filters = $this->hostFilters();
-        $result  = $this->query->hosts($filters, (int) ($_GET['page'] ?? 1));
+        $errors = [];
 
-        $this->view->render('inventory/hosts', [
-            'title'    => 'Hostovi',
-            'nav'      => 'hosts',
-            'result'   => $result,
-            'filters'  => $filters,
-            'options'  => $this->query->hostFilterOptions(),
-            'lastRuns' => $this->query->lastSuccessfulRuns(),
-        ]);
-    }
-
-    public function host(string $id): void
-    {
-        $host = $this->query->host((int) $id);
-
-        if ($host === null) {
-            http_response_code(404);
-            header('Location: /hosts');
-
-            return;
+        if ($input['hostname'] === '') {
+            $errors[] = 'Unesi adresu vCentera.';
+        } elseif (
+            filter_var($input['hostname'], FILTER_VALIDATE_IP) === false
+            && filter_var($input['hostname'], FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) === false
+        ) {
+            $errors[] = 'Adresa nije ispravan FQDN ni IP.';
         }
 
-        $this->view->render('inventory/host', [
-            'title'    => (string) $host['name'],
-            'nav'      => 'hosts',
-            'host'     => $host,
-            'vms'      => $this->query->vmsOnHost((int) $host['integration_id'], (string) $host['moref']),
-            'changes'  => $this->query->hostChanges((int) $host['id']),
-            'lastRuns' => $this->query->lastSuccessfulRuns(),
-        ]);
-    }
-
-    /**
-     * Izvoz hostova u CSV, isti princip kao kod masina: uslovi sa ekrana,
-     * bez stranicenja, mere u osnovnim jedinicama.
-     */
-    public function exportHosts(): void
-    {
-        $filters  = $this->hostFilters();
-        $lastRuns = $this->query->lastSuccessfulRuns();
-
-        $header = [
-            'integracija', 'moref', 'ime',
-            'stanje_veze', 'napajanje',
-            'klaster', 'datacentar', 'broj_masina',
-            'izvor_hardvera', 'proizvodjac', 'model',
-            'serijski_broj', 'inventarski_broj', 'hardverski_uuid',
-            'cpu_model', 'cpu_soketa', 'cpu_jezgara', 'cpu_niti', 'cpu_mhz',
-            'memorija_bajtova',
-            'esxi_verzija', 'esxi_build', 'bios_verzija',
-            'prvi_put_vidjeno_utc', 'poslednji_put_vidjeno_utc',
-            'poslednji_run', 'nije_u_poslednjem_runu',
-        ];
-
-        $rows = (function () use ($filters, $lastRuns): iterable {
-            foreach ($this->query->hostsForExport($filters) as $host) {
-                $lastRun = $lastRuns[(int) $host['integration_id']] ?? null;
-                $missing = $lastRun !== null && (int) $host['last_run_id'] < $lastRun;
-
-                yield [
-                    $host['integration_name'],
-                    $host['moref'],
-                    $host['name'],
-                    $host['connection_state'],
-                    $host['power_state'],
-                    $host['cluster_name'] ?? $host['cluster_moref'],
-                    $host['datacenter_moref'],
-                    $host['vm_count'],
-                    $host['hardware_source'],
-                    $host['vendor'],
-                    $host['model'],
-                    $host['serial_number'],
-                    $host['asset_tag'],
-                    $host['hardware_uuid'],
-                    $host['cpu_model'],
-                    $host['cpu_sockets'],
-                    $host['cpu_cores'],
-                    $host['cpu_threads'],
-                    $host['cpu_mhz'],
-                    $host['memory_bytes'],
-                    $host['esxi_version'],
-                    $host['esxi_build'],
-                    $host['bios_version'],
-                    $host['first_seen'],
-                    $host['last_seen'],
-                    $host['last_run_id'],
-                    $missing ? 'da' : 'ne',
-                ];
-            }
-        })();
-
-        $this->csv->send('syncops-hostovi-' . gmdate('Y-m-d-Hi') . '.csv', $header, $rows);
-    }
-
-    /**
-     * Uslovi iz URL-a. Cita ih i prikaz i izvoz, da bi izvezeno uvek
-     * odgovaralo onome sto se vidi na ekranu.
-     *
-     * @return array<string, string>
-     */
-    private function vmFilters(): array
-    {
-        return [
-            'search'  => trim((string) ($_GET['q'] ?? '')),
-            'power'   => (string) ($_GET['power'] ?? ''),
-            'guest'   => (string) ($_GET['guest'] ?? ''),
-            'cluster' => (string) ($_GET['cluster'] ?? ''),
-            'host'    => (string) ($_GET['host'] ?? ''),
-        ];
-    }
-
-    public function vms(): void
-    {
-        $filters = $this->vmFilters();
-        $result  = $this->query->vms($filters, (int) ($_GET['page'] ?? 1));
-
-        $this->view->render('inventory/vms', [
-            'title'    => 'Virtuelne mašine',
-            'nav'      => 'vms',
-            'result'   => $result,
-            'filters'  => $filters,
-            'options'  => $this->query->vmFilterOptions(),
-            'lastRuns' => $this->query->lastSuccessfulRuns(),
-        ]);
-    }
-
-    /**
-     * Izvoz masina u CSV, sa istim uslovima koji su primenjeni na ekranu i
-     * bez stranicenja — izvozi se sve sto odgovara, a ne samo tekuca strana.
-     *
-     * Mere se izvoze u osnovnim jedinicama (MiB, bajtovi) kao celi brojevi:
-     * "4.5 GiB" bi u Excel-u sa zarezom kao decimalnim znakom stiglo kao
-     * tekst, pa se po njemu ne bi moglo racunati.
-     */
-    public function exportVms(): void
-    {
-        $filters = $this->vmFilters();
-        $lastRuns = $this->query->lastSuccessfulRuns();
-
-        $header = [
-            'integracija', 'moref', 'ime',
-            'instance_uuid', 'bios_uuid',
-            'napajanje', 'stanje_gosta',
-            'os_podesen_u_vcenteru', 'os_prijavljen_iz_gosta', 'os_porodica',
-            'vcpu', 'jezgara_po_soketu', 'ram_mib',
-            'diskova', 'kapacitet_diskova_bajtova', 'mreznih_kartica',
-            'hostname_gosta', 'ip_adresa',
-            'host', 'klaster', 'datacentar',
-            'verzija_hardvera',
-            'prvi_put_vidjeno_utc', 'poslednji_put_vidjeno_utc',
-            'poslednji_run', 'nije_u_poslednjem_runu',
-        ];
-
-        $rows = (function () use ($filters, $lastRuns): iterable {
-            foreach ($this->query->vmsForExport($filters) as $vm) {
-                $lastRun = $lastRuns[(int) $vm['integration_id']] ?? null;
-                $missing = $lastRun !== null && (int) $vm['last_run_id'] < $lastRun;
-
-                yield [
-                    $vm['integration_name'],
-                    $vm['moref'],
-                    $vm['name'],
-                    $vm['instance_uuid'],
-                    $vm['bios_uuid'],
-                    $vm['power_state'],
-                    $vm['guest_state'],
-                    $vm['guest_os'],
-                    $vm['guest_full_name'],
-                    $vm['guest_os_family'],
-                    $vm['cpu_count'],
-                    $vm['cpu_cores_per_socket'],
-                    $vm['memory_mib'],
-                    $vm['disk_count'],
-                    $vm['disk_capacity_bytes'],
-                    $vm['nic_count'],
-                    $vm['guest_hostname'],
-                    $vm['guest_ip_address'],
-                    $vm['host_name'] ?? $vm['host_moref'],
-                    $vm['cluster_name'] ?? $vm['cluster_moref'],
-                    $vm['datacenter_moref'],
-                    $vm['hardware_version'],
-                    $vm['first_seen'],
-                    $vm['last_seen'],
-                    $vm['last_run_id'],
-                    $missing ? 'da' : 'ne',
-                ];
-            }
-        })();
-
-        $this->csv->send(
-            'syncops-masine-' . gmdate('Y-m-d-Hi') . '.csv',
-            $header,
-            $rows
-        );
-    }
-
-    public function vm(string $id): void
-    {
-        $vm = $this->query->vm((int) $id);
-
-        if ($vm === null) {
-            http_response_code(404);
-            header('Location: /vms');
-
-            return;
+        if ($input['name'] === '') {
+            $errors[] = 'Unesi naziv po kojem ćeš prepoznati ovaj vCenter.';
         }
 
-        $this->view->render('inventory/vm', [
-            'title'    => (string) $vm['name'],
-            'nav'      => 'vms',
-            'vm'       => $vm,
-            'changes'  => $this->query->vmChanges((int) $vm['id']),
-            'lastRuns' => $this->query->lastSuccessfulRuns(),
-        ]);
+        $port = (int) $input['port'];
+
+        if ($port < 1 || $port > 65535) {
+            $errors[] = 'Port mora biti broj između 1 i 65535.';
+        }
+
+        if ($input['username'] === '') {
+            $errors[] = 'Unesi korisničko ime servisnog naloga.';
+        }
+
+        if ($requirePassword && $input['password'] === '') {
+            $errors[] = 'Unesi lozinku servisnog naloga.';
+        }
+
+        if (!array_key_exists($input['api_flavor'], self::FLAVORS)) {
+            $errors[] = 'Izaberi verziju API-ja sa liste.';
+        }
+
+        return $errors;
+    }
+
+    private function notFound(): void
+    {
+        http_response_code(404);
+        $this->flash->error('Ta integracija ne postoji.');
+        header('Location: /integrations');
     }
 }
