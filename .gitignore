@@ -1,0 +1,21 @@
+# .gitignore
+
+# Okruzenje — NIKADA ne komitovati
+.env
+.env.local
+
+# Zavisnosti
+/vendor/
+
+# Runtime
+/var/
+*.log
+
+# Editori / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Build artefakti
+/public/assets/build/
