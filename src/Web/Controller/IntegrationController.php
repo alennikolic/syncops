@@ -10,6 +10,7 @@ namespace SyncOps\Web\Controller;
 
 use SyncOps\Integration\Integration;
 use SyncOps\Integration\IntegrationRepository;
+use SyncOps\Source\VCenter\ConnectionTester;
 use SyncOps\Web\Auth;
 use SyncOps\Web\Flash;
 use SyncOps\Web\View;
@@ -28,6 +29,7 @@ final class IntegrationController
         private readonly View $view,
         private readonly Auth $auth,
         private readonly Flash $flash,
+        private readonly ConnectionTester $tester,
     ) {
     }
 
@@ -150,6 +152,49 @@ final class IntegrationController
         }
 
         $this->flash->success('Izmene su sačuvane.');
+        header('Location: /integrations');
+    }
+
+    /**
+     * Provera konekcije. Traje nekoliko sekundi, pa se radi sinhrono — za
+     * razliku od discovery-ja, koji ide kroz CLI worker jer ume da traje
+     * minutima i probije ogranicenje trajanja web zahteva.
+     */
+    public function test(string $id): void
+    {
+        $integration = $this->repo->find((int) $id);
+
+        if ($integration === null) {
+            $this->notFound();
+
+            return;
+        }
+
+        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
+            $this->flash->error('Sesija je istekla. Pokusaj ponovo.');
+            header('Location: /integrations');
+
+            return;
+        }
+
+        $result = $this->tester->test($integration);
+
+        if ($result->ok) {
+            $this->flash->success(sprintf(
+                'Veza sa „%s” radi (%s%s). Pronađeno — %s',
+                $integration->name,
+                $result->flavor === Integration::FLAVOR_API_V2 ? '/api' : '/rest',
+                $result->productVersion !== null ? ' ' . $result->productVersion : '',
+                $result->message
+            ));
+        } else {
+            $this->flash->error(sprintf(
+                'Veza sa „%s” ne radi: %s',
+                $integration->name,
+                $result->message
+            ));
+        }
+
         header('Location: /integrations');
     }
 
