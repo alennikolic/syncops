@@ -1,16 +1,16 @@
 # SyncOPS
 
-Sistem za prikupljanje podataka o infrastrukturi iz više izvora i njihovu pripremu za sinhronizaciju sa CMDB bazom (AssetOPS).
+Sistem za prikupljanje podataka o infrastrukturi iz više izvora i njihovu pripremu za sinhronizaciju sa CMDB bazom.
 
 Prva faza pokriva **vCenter** integraciju: prikupljanje podataka o klasterima, ESXi hostovima i virtuelnim mašinama preko vSphere REST API-ja, uz čuvanje istorije detekcije i promena.
 
-> **Status:** u razvoju (v0.1 — vCenter discovery)
+> **Status:** u razvoju — podignuto razvojno okruženje, aplikativni sloj se piše.
 
 ---
 
 ## Šta SyncOPS radi
 
-SyncOPS je **među-korak** između izvornih sistema i CMDB-a. On ne donosi odluke o tome šta je CI, ne pravi relacije i ne briše podatke — on prikuplja, normalizuje i vodi evidenciju o tome kada je šta viđeno.
+SyncOPS je **među-korak** između izvornih sistema i CMDB baze. On ne donosi odluke o tome šta je CI, ne pravi relacije i ne briše podatke — prikuplja, normalizuje i vodi evidenciju o tome kada je šta viđeno.
 
 - povezuje se na **više vCenter servera** nezavisno
 - prikuplja **Cluster / Host / VM** objekte
@@ -18,7 +18,7 @@ SyncOPS je **među-korak** između izvornih sistema i CMDB-a. On ne donosi odluk
 - vodi **journal** — `first_seen`, `last_seen` i zapis svake stvarne promene
 - **nikada ne briše redove** — nestanak objekta se izvodi iz `last_seen`, a odluku o brisanju donosi kasnija obrada
 
-Transformacije, korelacija objekata između vCentera i sinhronizacija prema AssetOPS-u su **sledeća faza** i nisu deo ovog repozitorijuma u trenutnoj verziji.
+Transformacije, korelacija objekata između vCentera i sama sinhronizacija prema CMDB bazi su **sledeća faza** i nisu deo ovog repozitorijuma u trenutnoj verziji.
 
 ---
 
@@ -27,33 +27,133 @@ Transformacije, korelacija objekata između vCentera i sinhronizacija prema Asse
 | Komponenta | Izbor |
 |---|---|
 | Aplikacija | PHP 8.3 (bez framework-a) |
-| Baza | MySQL 8.x |
-| Web server | nginx + PHP-FPM |
+| Baza | MySQL 8.4 |
+| Web server | nginx 1.27 + PHP-FPM |
 | Pokretanje | Docker + Docker Compose |
 | vCenter API | vSphere Automation API (REST) |
 | Testiranje | PHPUnit, uz snimljene vCenter fixture-e |
 
-Zavisnosti su namerno svedene na minimum: `ext-curl`, `ext-pdo_mysql`, `ext-sodium`.
+Zavisnosti su svedene na PHP ekstenzije: `pdo_mysql`, `curl`, `sodium`, `json`, `mbstring`.
+
+---
+
+## Pokretanje
+
+### Preduslovi
+
+- Docker Engine 24+ sa Compose V2 (`docker compose`, ne `docker-compose`)
+- slobodni portovi `8080` (GUI) i `3307` (MySQL na host mašini) — oba se mogu promeniti u `.env`
+
+### 1. Kloniranje i priprema konfiguracije
+
+```bash
+git clone https://github.com/alennikolic/syncops.git
+cd syncops
+cp .env.example .env
+```
+
+### 2. Generisanje enkripcionog ključa
+
+vCenter kredencijali se čuvaju enkriptovano u bazi. Ključ se generiše jednom:
+
+```bash
+docker compose run --rm app php -r "echo base64_encode(random_bytes(32)), PHP_EOL;"
+```
+
+Dobijeni string upisati u `.env` kao vrednost `SECRET_KEY`. U istom koraku promeniti i `DB_PASSWORD` i `DB_ROOT_PASSWORD`.
+
+> **Pažnja:** ako se `SECRET_KEY` kasnije izgubi ili promeni, svi sačuvani vCenter kredencijali postaju nedešifrabilni i moraju se uneti ponovo.
+
+### 3. Podizanje kontejnera
+
+```bash
+docker compose up -d --build
+```
+
+Prvi build traje nekoliko minuta jer se kompajliraju PHP ekstenzije. Svako sledeće podizanje je trenutno.
+
+Provera statusa:
+
+```bash
+docker compose ps
+```
+
+Sva tri servisa (`syncops-web`, `syncops-app`, `syncops-db`) treba da budu `running`, a `syncops-db` dodatno `healthy`.
+
+### 4. Provera
+
+Otvoriti **http://localhost:8080**
+
+Dobija se status stranica koja proverava verziju PHP-a, vremensku zonu, prisustvo svih potrebnih ekstenzija, konekciju ka bazi i ispravnost `SECRET_KEY`. Ako su sve stavke označene sa `OK`, okruženje je spremno.
+
+### Korisne komande
+
+```bash
+docker compose logs -f app          # PHP greške i php-fpm log
+docker compose logs -f web          # nginx access i error log
+docker compose exec app sh          # shell u aplikativnom kontejneru
+docker compose exec db mysql -u root -p syncops   # SQL konzola
+
+docker compose restart app          # restart posle izmene php.ini
+docker compose up -d --build app    # rebuild posle izmene Dockerfile-a
+docker compose down                 # zaustavljanje (podaci u bazi ostaju)
+docker compose down -v              # zaustavljanje + BRISANJE baze
+```
+
+Izmene u PHP kodu se vide odmah — repozitorijum je bind-mountovan u `app` kontejner i OPcache je u razvojnom režimu. Restart je potreban samo posle izmene `php.ini`, a rebuild posle izmene `Dockerfile`-a.
+
+---
+
+## Konfiguracija
+
+Sve se podešava preko `.env` fajla, koji **nije** u repozitorijumu.
+
+| Promenljiva | Opis |
+|---|---|
+| `APP_ENV` | `dev` ili `prod` |
+| `WEB_PORT` | port GUI-ja na host mašini (podrazumevano `8080`) |
+| `DB_NAME`, `DB_USER`, `DB_PASSWORD` | pristupni podaci za bazu |
+| `DB_ROOT_PASSWORD` | root lozinka MySQL-a |
+| `DB_PORT_HOST` | port na koji se MySQL mapira na host (podrazumevano `3307`) |
+| `SECRET_KEY` | 32 bajta u base64 zapisu, za enkripciju vCenter kredencijala |
+
+Kredencijali vCenter servera se **ne drže u `.env`** — unose se kroz GUI i čuvaju enkriptovano u bazi.
+
+### Prelazak na produkciju
+
+Tri mesta zahtevaju izmenu, sva su označena komentarom u samim fajlovima:
+
+- `docker/php/php.ini` — `display_errors = Off`, `opcache.validate_timestamps = 0`, `session.cookie_secure = 1`
+- `docker-compose.yml` — obrisati `ports` blok kod `db` servisa, da baza ne bude izložena
+- `.env` — `APP_ENV=prod`
 
 ---
 
 ## Struktura repozitorijuma
 
+### Trenutno u repozitorijumu
+
 ```
 syncops/
-├── .github/
-│   └── workflows/ci.yml            # lint + unit testovi
+├── docker-compose.yml              # definicija servisa: web, app, db
+├── .env.example                    # obrazac konfiguracije
+├── .gitignore
+├── composer.json                   # PSR-4 autoload, PHP zahtevi
+├── README.md
 ├── docker/
 │   ├── php/
-│   │   ├── Dockerfile
-│   │   └── php.ini
+│   │   ├── Dockerfile              # php:8.3-fpm-alpine + ekstenzije
+│   │   └── php.ini                 # podešavanja za razvoj
 │   └── nginx/
-│       └── default.conf
-├── docker-compose.yml
-├── .env.example
-├── composer.json
-├── README.md
-│
+│       └── default.conf            # document root, front controller, PHP handler
+└── public/
+    └── index.php                   # privremena status stranica
+```
+
+### Planirana struktura
+
+```
+syncops/
 ├── bin/
 │   ├── syncops                     # jedini CLI entrypoint
 │   └── migrate                     # pokretanje migracija
@@ -67,10 +167,6 @@ syncops/
 │       ├── 0002_discovery_run.sql
 │       ├── 0003_raw_object.sql
 │       └── 0004_vcenter_inventory.sql
-│
-├── public/                         # JEDINI document root
-│   ├── index.php                   # front controller
-│   └── assets/
 │
 ├── src/
 │   ├── Core/                       # infrastrukturni sloj
@@ -121,28 +217,19 @@ syncops/
 │   └── Web/                        # GUI
 │       ├── Router.php
 │       ├── Controller/
-│       │   ├── IntegrationController.php
-│       │   ├── RunController.php
-│       │   └── InventoryController.php
 │       └── View/
-│           ├── layout.php
-│           └── integration/
 │
-├── tests/
-│   ├── Unit/
-│   └── Fixtures/
-│       └── vcenter/                # snimljeni pravi API odgovori
-│           ├── api/vm-list.json
-│           ├── api/vm-detail.json
-│           └── rest/host-list.json
-│
-└── var/                            # runtime, van git-a
-    └── log/
+└── tests/
+    ├── Unit/
+    └── Fixtures/
+        └── vcenter/                # snimljeni pravi API odgovori
 ```
 
 ### Principi iza strukture
 
-**`public/` je jedini document root.** `src/`, `config/`, `.env` i `vendor/` su izvan njega i nisu dostupni preko web servera.
+**`public/` je jedini document root.** `src/`, `config/` i `.env` nisu ni mountovani u web kontejner, pa nisu dostupni preko HTTP-a ni greškom u konfiguraciji.
+
+**PHP se izvršava samo kroz `index.php`.** Nginx tu lokaciju ima označenu kao `internal` — prolaze samo interna preusmerenja iz `try_files`. Svaki drugi `.php` fajl pod `public/` vraća 404.
 
 **Jedan CLI entrypoint.** Sve komande idu kroz `bin/syncops`, sa jednim mestom za bootstrap (autoload, konfiguracija, logger).
 
@@ -150,37 +237,11 @@ syncops/
 
 **`Mapper/` je odvojen od `Collector/`.** Razlike između API dijalekata (npr. `{"value": {...}}` naspram golog JSON-a) gase se u maperu — dalje kroz aplikaciju putuje isključivo DTO.
 
-**`Source/` je pripremljen za više izvora.** `SourceInterface` i `Dto/` postoje da bi se kasniji izvori (Kaspersky Security Center, čitanje iz AssetOPS-a) dodavali pored `VCenter/`, a ne kao paralelni sistem.
+**`Source/` je pripremljen za više izvora.** `SourceInterface` i `Dto/` postoje da bi se kasniji izvori (npr. Kaspersky Security Center, čitanje iz CMDB baze) dodavali pored `VCenter/`, a ne kao paralelni sistem.
 
 ---
 
-## Pokretanje
-
-```bash
-git clone <repo-url> syncops
-cd syncops
-cp .env.example .env
-# popuniti .env (vidi niže)
-docker compose up -d
-docker compose exec app bin/syncops migrate
-```
-
-GUI je zatim dostupan na `http://localhost:8080`.
-
-### Konfiguracija
-
-Sve se podešava preko `.env` fajla, koji **nije** u repozitorijumu. Obavezne promenljive:
-
-| Promenljiva | Opis |
-|---|---|
-| `DB_HOST`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` | pristup MySQL bazi |
-| `SECRET_KEY` | ključ za enkripciju vCenter kredencijala (libsodium, base64) |
-| `APP_ENV` | `dev` ili `prod` |
-| `TZ` | uvek `UTC` |
-
-Kredencijali vCenter servera se **ne drže u `.env`** — unose se kroz GUI i čuvaju enkriptovano u bazi, ključem iz `SECRET_KEY`.
-
-### CLI komande
+## Planirane CLI komande
 
 ```bash
 bin/syncops migrate                      # primeni nove migracije
@@ -191,7 +252,9 @@ bin/syncops discover --all               # pokreni discovery za sve aktivne
 bin/syncops worker                       # worker petlja (obrađuje red poslova)
 ```
 
-Discovery se **nikada ne izvršava kroz HTTP zahtev.** GUI samo upisuje posao u red; izvršava ga CLI worker.
+Discovery se **nikada ne izvršava kroz HTTP zahtev** — web zahtev ima ograničenje trajanja, a skeniranje većeg vCentera ga probija. GUI samo upisuje posao u red; izvršava ga CLI worker.
+
+U `docker-compose.yml` postoji pripremljen `worker` servis, zakomentarisan dok `bin/syncops` ne bude napisan.
 
 ---
 
@@ -214,14 +277,14 @@ Svaki red u inventory sloju nosi:
 
 Pri svakom run-u: ako je `payload_hash` nepromenjen, osvežavaju se samo `last_seen` i `last_run_id`. Ako se promenio, red se ažurira i upisuje se zapis u odgovarajuću `*_change` tabelu (`old_values`, `new_values`).
 
-Tabela `discovery_run` beleži svaki run sa statusom (`running`, `success`, `partial`, `failed`) i brojačima po tipu objekta. **Bez podatka o tome da li je run bio kompletan, `last_seen` nema značenje** — zato kasnija obrada uvek čita run status.
+Tabela `discovery_run` beleži svaki run sa statusom (`running`, `success`, `partial`, `failed`) i brojačima po tipu objekta. **Bez podatka o tome da li je run bio kompletan, `last_seen` nema značenje** — zato kasnija obrada uvek čita i status run-a.
 
 ### Identifikatori
 
 Za svaki VM se povlače i čuvaju:
 
 - `instance_uuid` — jedinstven u okviru vCentera, stabilan; primarni identifikator
-- `bios_uuid` — SMBIOS UUID koji vidi gost; služi za kasniju korelaciju sa agentima (Kaspersky i sl.)
+- `bios_uuid` — SMBIOS UUID koji vidi gostujući OS; služi za kasniju korelaciju sa agentima na mašinama
 - `moref` — identifikator u okviru vCentera (`vm-1234`); nije stabilan, koristi se samo unutar run-a i za dijagnostiku
 
 Ako VM pređe u drugi vCenter, SyncOPS ga beleži kao nov red. Prepoznavanje da je reč o istoj mašini je zadatak kasnije faze transformacija.
@@ -230,9 +293,9 @@ Ako VM pređe u drugi vCenter, SyncOPS ga beleži kao nov red. Prepoznavanje da 
 
 ## Poznata ograničenja vSphere REST API-ja
 
-Ova ograničenja su ugrađena u dizajn i nisu bug:
+Ova ograničenja su ugrađena u dizajn i nisu greška u implementaciji:
 
-**Limit po pozivu.** `GET /api/vcenter/vm` vraća najviše 4000 VM-ova (1000 u starijim verzijama), a preko toga vraća grešku umesto rezultata. Paginacije nema. Zato `VmCollector` particioniše upit po datacentru i klasteru i deduplikuje rezultat.
+**Limit po pozivu.** `GET /api/vcenter/vm` vraća najviše 4000 VM-ova (1000 u starijim verzijama), a preko toga vraća grešku umesto rezultata. Paginacije nema. Zato `VmCollector` particioniše upit po datacentru i klasteru i deduplikuje rezultat po `moref`-u.
 
 **Host podaci.** REST za hostove daje samo ime, `connection_state` i `power_state`. Hardverski podaci — proizvođač, model, serijski broj, CPU, RAM, ESXi build — **nisu dostupni preko REST-a**. Kolone za njih postoje u šemi kao `NULL` i biće popunjene kada se doda SOAP klijent (vidi roadmap).
 
@@ -253,14 +316,17 @@ Ova ograničenja su ugrađena u dizajn i nisu bug:
 
 ## Roadmap
 
-- [x] vCenter REST klijent (oba dijalekta) i detekcija verzije
-- [x] Cluster / Host / VM discovery, raw + inventory sloj
-- [x] Journal detekcije i promena
+- [x] Razvojno okruženje: Docker Compose (nginx, PHP-FPM, MySQL)
+- [ ] Migracije baze i osnovni sloj (`Db`, `Secret`, `Log`)
+- [ ] vCenter REST klijent, oba dijalekta, sa detekcijom verzije
+- [ ] Cluster / Host / VM discovery, raw + inventory sloj
+- [ ] Journal detekcije i promena
+- [ ] GUI: integracije, pokretanje discovery-ja, pregled prikupljenih podataka
 - [ ] SOAP klijent za hardverske podatke o hostovima (serijski broj, model, CPU, RAM)
 - [ ] Export prikupljenih podataka (XLSX / CSV)
 - [ ] Sloj transformacija: korelacija objekata između vCentera
 - [ ] Relacije između objekata (VM → Host → Cluster, VM → Datastore)
-- [ ] Sinhronizacija prema AssetOPS-u
+- [ ] Sinhronizacija prema CMDB bazi
 - [ ] Integracija sa Kaspersky Security Center (radne stanice)
 
 ---
