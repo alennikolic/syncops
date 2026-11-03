@@ -13,7 +13,11 @@
 //   bin/syncops integration:add          dodaj integraciju (interaktivno)
 //   bin/syncops integration:test <id>    proveri konekciju na vCenter
 //   bin/syncops collect:dry <id>         prikupi i ispisi, BEZ upisa u bazu
-//   bin/syncops discover <id>            prikupi i UPISI u bazu
+//   bin/syncops discover <id>            prikupi i UPISI u bazu (odmah)
+//   bin/syncops discover:queue <id>      stavi u red cekanja
+//   bin/syncops discover:queue --all     stavi sve aktivne u red cekanja
+//   bin/syncops worker                   obradjuj red cekanja
+//   bin/syncops runs:reset <id>          oznaci zaglavljen posao kao neuspeo
 //   bin/syncops integration:password <id>  promeni lozinku
 //   bin/syncops integration:enable <id>
 //   bin/syncops integration:disable <id>
@@ -66,6 +70,7 @@ use SyncOps\Integration\IntegrationRepository;
 use SyncOps\Run\DiscoveryRunner;
 use SyncOps\Run\RunRepository;
 use SyncOps\Run\RunStatus;
+use SyncOps\Run\Worker;
 use SyncOps\Source\VCenter\Client\ClientFactory;
 use SyncOps\Source\VCenter\CollectionResult;
 use SyncOps\Source\VCenter\ConnectionTester;
@@ -131,7 +136,10 @@ $usage = static function () use ($stdout): void {
     $stdout('  integration:add               Dodaj integraciju (interaktivno)');
     $stdout('  integration:test <id>         Proveri konekciju na vCenter');
     $stdout('  collect:dry <id>              Prikupi i ispisi, bez upisa u bazu');
-    $stdout('  discover <id>                 Prikupi i upisi u bazu');
+    $stdout('  discover <id>                 Prikupi i upisi u bazu (odmah)');
+    $stdout('  discover:queue <id>|--all     Stavi u red cekanja');
+    $stdout('  worker                        Obradjuj red cekanja');
+    $stdout('  runs:reset <id>               Oznaci zaglavljen posao kao neuspeo');
     $stdout('  integration:password <id>     Promeni lozinku');
     $stdout('  integration:enable <id>       Aktiviraj');
     $stdout('  integration:disable <id>      Deaktiviraj');
@@ -159,6 +167,9 @@ $known = [
     'integration:test',
     'collect:dry',
     'discover',
+    'discover:queue',
+    'worker',
+    'runs:reset',
     'integration:password',
     'integration:enable',
     'integration:disable',
@@ -387,6 +398,56 @@ try {
         exit(0);
     }
 
+    // --- sklapanje runner-a, deljeno izmedju discover i worker -------------
+    $makeRunner = static fn (): DiscoveryRunner => new DiscoveryRunner(
+        $pdo,
+        $repo,
+        new RunRepository($pdo),
+        new VCenterSource(new ClientFactory(timeout: 60)),
+        new RawStore($pdo),
+        new ClusterRepository($pdo),
+        new HostRepository($pdo),
+        new VmRepository($pdo),
+    );
+
+    // --- worker -----------------------------------------------------------
+    if ($command === 'worker') {
+        $worker = new Worker(
+            new RunRepository($pdo),
+            $repo,
+            $makeRunner(),
+            static function (string $line) use ($stdout): void {
+                $stdout('[' . gmdate('Y-m-d H:i:s') . ' UTC] ' . $line);
+            },
+        );
+
+        $worker->run();
+        exit(0);
+    }
+
+    // --- discover:queue --all ---------------------------------------------
+    if ($command === 'discover:queue' && $argument === '--all') {
+        $runner = $makeRunner();
+        $queued = 0;
+
+        foreach ($repo->all(onlyActive: true) as $active) {
+            try {
+                $runId = $runner->enqueue($active, RunStatus::TRIGGER_SCHEDULE);
+                $stdout(sprintf('  %-24s posao #%d u redu cekanja', $active->name, $runId));
+                $queued++;
+            } catch (Throwable $e) {
+                $stdout(sprintf('  %-24s preskocena: %s', $active->name, $e->getMessage()));
+            }
+        }
+
+        $stdout();
+        $stdout($queued === 0
+            ? 'Nijedan posao nije dodat u red.'
+            : "U red je dodato poslova: {$queued}.");
+
+        exit(0);
+    }
+
     // --- komande koje zahtevaju <id> --------------------------------------
     if ($argument === null || !ctype_digit($argument)) {
         $stderr("Komanda {$command} zahteva ID integracije.");
@@ -394,7 +455,31 @@ try {
         exit(1);
     }
 
-    $id          = (int) $argument;
+    $id = (int) $argument;
+
+    // runs:reset prima broj POSLA, ne integracije, pa ide pre trazenja
+    // integracije po tom broju.
+    if ($command === 'runs:reset') {
+        $runs = new RunRepository($pdo);
+        $run  = $runs->find($id);
+
+        if ($run === null) {
+            $stderr("Posao #{$id} ne postoji.");
+            exit(1);
+        }
+
+        if (RunStatus::isFinished((string) $run['status'])) {
+            $stdout("Posao #{$id} je vec zavrsen sa ishodom: {$run['status']}. Nema sta da se oslobodi.");
+            exit(0);
+        }
+
+        $runs->finish($id, RunStatus::FAILED, 'Rucno oznacen kao neuspeo preko runs:reset.');
+
+        $stdout("Posao #{$id} je oznacen kao neuspeo.");
+        $stdout("Integracija {$run['integration_id']} je otkljucana i moze ponovo da se prikuplja.");
+        exit(0);
+    }
+
     $integration = $repo->find($id);
 
     if ($integration === null) {
@@ -671,6 +756,14 @@ try {
         }
 
         exit($outcome->isSuccess() ? 0 : 1);
+    }
+
+    if ($command === 'discover:queue') {
+        $runId = $makeRunner()->enqueue($integration, RunStatus::TRIGGER_CLI);
+
+        $stdout("Posao #{$runId} je u redu cekanja za {$integration->name}.");
+        $stdout('Pokupice ga worker. Ako worker ne radi: docker compose up -d worker');
+        exit(0);
     }
 
     if ($command === 'integration:password') {
