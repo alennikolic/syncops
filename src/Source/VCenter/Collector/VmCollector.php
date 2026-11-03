@@ -71,7 +71,13 @@ final class VmCollector
 
             try {
                 $detail = $client->getVm($moref);
-                $guest  = $client->getVmGuestIdentity($moref);
+
+                // Ugasenu masinu nema smisla pitati za podatke iz gosta —
+                // odgovor je uvek greska, a to je jedan poziv manje po masini.
+                // Na 153 masine od kojih su 64 ugasene to je 64 poziva manje.
+                $guest = ($detail['power_state'] ?? null) === 'POWERED_ON'
+                    ? $client->getVmGuestIdentity($moref)
+                    : null;
 
                 $vms[] = $this->mapper->map(
                     $moref,
