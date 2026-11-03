@@ -12,6 +12,7 @@
 //   bin/syncops integrations             izlistaj integracije
 //   bin/syncops integration:add          dodaj integraciju (interaktivno)
 //   bin/syncops integration:test <id>    proveri konekciju na vCenter
+//   bin/syncops collect:dry <id>         prikupi i ispisi, BEZ upisa u bazu
 //   bin/syncops integration:password <id>  promeni lozinku
 //   bin/syncops integration:enable <id>
 //   bin/syncops integration:disable <id>
@@ -62,7 +63,9 @@ use SyncOps\Core\Secret;
 use SyncOps\Integration\Integration;
 use SyncOps\Integration\IntegrationRepository;
 use SyncOps\Source\VCenter\Client\ClientFactory;
+use SyncOps\Source\VCenter\CollectionResult;
 use SyncOps\Source\VCenter\ConnectionTester;
+use SyncOps\Source\VCenter\VCenterSource;
 use SyncOps\Web\Auth;
 
 // -----------------------------------------------------------------------
@@ -119,6 +122,7 @@ $usage = static function () use ($stdout): void {
     $stdout('  integrations                  Izlistaj integracije');
     $stdout('  integration:add               Dodaj integraciju (interaktivno)');
     $stdout('  integration:test <id>         Proveri konekciju na vCenter');
+    $stdout('  collect:dry <id>              Prikupi i ispisi, bez upisa u bazu');
     $stdout('  integration:password <id>     Promeni lozinku');
     $stdout('  integration:enable <id>       Aktiviraj');
     $stdout('  integration:disable <id>      Deaktiviraj');
@@ -144,6 +148,7 @@ $known = [
     'integrations',
     'integration:add',
     'integration:test',
+    'collect:dry',
     'integration:password',
     'integration:enable',
     'integration:disable',
@@ -422,6 +427,138 @@ try {
         }
 
         $stdout();
+        exit(0);
+    }
+
+    if ($command === 'collect:dry') {
+        $stdout("Prikupljam sa {$integration->baseUrl()} — NISTA SE NE UPISUJE U BAZU.");
+        $stdout();
+
+        $source = new VCenterSource(new ClientFactory(timeout: 60));
+
+        $phase = '';
+        $result = $source->collect($integration, $repo->password($integration->id), function (string $p, int $done, int $total) use (&$phase, $stdout): void {
+            if ($p !== $phase) {
+                $phase = $p;
+                fwrite(STDOUT, '  ' . $p . ' ');
+            }
+
+            if ($total > 0) {
+                // Tacka na svakih 10 masina, da ispis ne bude kilometar dugacak.
+                if ($done % 10 === 0 || $done === $total) {
+                    fwrite(STDOUT, '.');
+                }
+
+                if ($done === $total) {
+                    $stdout(' ' . $total);
+                }
+            } else {
+                $stdout('...');
+            }
+        });
+
+        $stdout();
+        $stdout(sprintf(
+            'Gotovo za %.1f s, %d HTTP poziva (%s%s).',
+            $result->durationSeconds,
+            $result->apiCalls,
+            $result->flavor,
+            $result->productVersion !== null ? ' ' . $result->productVersion : ''
+        ));
+        $stdout();
+
+        // --- Klasteri -----------------------------------------------------
+        $stdout('KLASTERI (' . count($result->clusters) . ')');
+        $stdout(sprintf('  %-14s %-26s %-18s %-4s %-4s', 'MOREF', 'NAZIV', 'DATACENTAR', 'HA', 'DRS'));
+
+        foreach ($result->clusters as $c) {
+            $stdout(sprintf(
+                '  %-14s %-26s %-18s %-4s %-4s',
+                $c->moref,
+                mb_strimwidth($c->name, 0, 26, '..'),
+                mb_strimwidth((string) $c->datacenterName, 0, 18, '..'),
+                $c->haEnabled === null ? '?' : ($c->haEnabled ? 'da' : 'ne'),
+                $c->drsEnabled === null ? '?' : ($c->drsEnabled ? 'da' : 'ne')
+            ));
+        }
+
+        // --- Hostovi ------------------------------------------------------
+        $stdout();
+        $stdout('HOSTOVI (' . count($result->hosts) . ')');
+        $stdout(sprintf('  %-10s %-34s %-16s %-13s %-14s', 'MOREF', 'NAZIV', 'STANJE', 'NAPAJANJE', 'KLASTER'));
+
+        foreach ($result->hosts as $h) {
+            $stdout(sprintf(
+                '  %-10s %-34s %-16s %-13s %-14s',
+                $h->moref,
+                mb_strimwidth($h->name, 0, 34, '..'),
+                (string) $h->connectionState,
+                $h->powerState ?? '—',
+                (string) $h->clusterMoref
+            ));
+        }
+
+        $withHw = count(array_filter($result->hosts, static fn ($h) => $h->hardwareSource !== null));
+        $stdout(sprintf('  hardverski podaci: %d / %d (REST ih nema)', $withHw, count($result->hosts)));
+
+        // --- Masine -------------------------------------------------------
+        $stdout();
+        $stdout('MASINE (' . count($result->vms) . ') — prvih 15');
+        $stdout(sprintf('  %-9s %-26s %-12s %-5s %-8s %-16s %-15s', 'MOREF', 'NAZIV', 'NAPAJANJE', 'CPU', 'RAM GiB', 'HOSTNAME', 'IP'));
+
+        foreach (array_slice($result->vms, 0, 15) as $v) {
+            $stdout(sprintf(
+                '  %-9s %-26s %-12s %-5s %-8s %-16s %-15s',
+                $v->moref,
+                mb_strimwidth($v->name, 0, 26, '..'),
+                (string) $v->powerState,
+                (string) $v->cpuCount,
+                $v->memoryMib === null ? '?' : (string) round($v->memoryMib / 1024, 1),
+                mb_strimwidth((string) $v->guestHostname, 0, 16, '..'),
+                (string) $v->guestIpAddress
+            ));
+        }
+
+        // --- Kvalitet podataka ----------------------------------------------
+        $withUuid  = count(array_filter($result->vms, static fn ($v) => $v->instanceUuid !== null));
+        $withIp    = count(array_filter($result->vms, static fn ($v) => $v->guestIpAddress !== null));
+        $withHost  = count(array_filter($result->vms, static fn ($v) => $v->hostMoref !== null));
+        $totalVms  = max(1, count($result->vms));
+
+        $byGuest = [];
+
+        foreach ($result->vms as $v) {
+            $byGuest[$v->guestState ?? 'nepoznato'] = ($byGuest[$v->guestState ?? 'nepoznato'] ?? 0) + 1;
+        }
+
+        $stdout();
+        $stdout('KVALITET PODATAKA');
+        $stdout(sprintf('  instance_uuid     %d / %d', $withUuid, count($result->vms)));
+        $stdout(sprintf('  IP adresa         %d / %d', $withIp, count($result->vms)));
+        $stdout(sprintf('  smestaj na host   %d / %d', $withHost, count($result->vms)));
+
+        foreach ($byGuest as $state => $count) {
+            $stdout(sprintf('  gost: %-12s %d', $state, $count));
+        }
+
+        unset($totalVms);
+
+        if ($result->failures !== []) {
+            $stdout();
+            $stdout('NEUSPESI (' . count($result->failures) . ') — run bi bio oznacen kao "partial"');
+
+            foreach (array_slice($result->failures, 0, 10) as $failure) {
+                $stdout('  - ' . $failure);
+            }
+        }
+
+        $stdout();
+        $stdout($result->isComplete()
+            ? 'Prikupljanje je bilo potpuno.'
+            : 'Prikupljanje je bilo DELIMICNO.');
+        $stdout();
+
+        unset($result);
         exit(0);
     }
 
