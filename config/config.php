@@ -35,9 +35,14 @@ return [
         'password' => $env('DB_PASSWORD'),
     ],
 
-    // Kljuc za enkripciju kredencijala. Ne koristi se u ovoj fazi,
-    // ali se ucitava da bi "migrate" mogao da upozori ako nedostaje.
+    // Kljuc za enkripciju kredencijala u bazi.
     'secret_key' => $env('SECRET_KEY'),
+
+    'app' => [
+        // bcrypt hash lozinke za pristup GUI-ju; generise se sa
+        // "bin/syncops password:hash". Prazno znaci da je GUI zatvoren.
+        'password_hash' => $env('APP_PASSWORD_HASH'),
+    ],
 
     'paths' => [
         'root'       => $root,
