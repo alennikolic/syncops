@@ -11,6 +11,7 @@
 //   bin/syncops password:hash            generisi APP_PASSWORD_HASH za GUI
 //   bin/syncops integrations             izlistaj integracije
 //   bin/syncops integration:add          dodaj integraciju (interaktivno)
+//   bin/syncops integration:test <id>    proveri konekciju na vCenter
 //   bin/syncops integration:password <id>  promeni lozinku
 //   bin/syncops integration:enable <id>
 //   bin/syncops integration:disable <id>
@@ -60,6 +61,8 @@ use SyncOps\Core\Migrator;
 use SyncOps\Core\Secret;
 use SyncOps\Integration\Integration;
 use SyncOps\Integration\IntegrationRepository;
+use SyncOps\Source\VCenter\Client\ClientFactory;
+use SyncOps\Source\VCenter\ConnectionTester;
 use SyncOps\Web\Auth;
 
 // -----------------------------------------------------------------------
@@ -115,6 +118,7 @@ $usage = static function () use ($stdout): void {
     $stdout('Integracije:');
     $stdout('  integrations                  Izlistaj integracije');
     $stdout('  integration:add               Dodaj integraciju (interaktivno)');
+    $stdout('  integration:test <id>         Proveri konekciju na vCenter');
     $stdout('  integration:password <id>     Promeni lozinku');
     $stdout('  integration:enable <id>       Aktiviraj');
     $stdout('  integration:disable <id>      Deaktiviraj');
@@ -139,6 +143,7 @@ $known = [
     'password:hash',
     'integrations',
     'integration:add',
+    'integration:test',
     'integration:password',
     'integration:enable',
     'integration:disable',
@@ -380,6 +385,44 @@ try {
     if ($integration === null) {
         $stderr("Integracija {$id} ne postoji.");
         exit(1);
+    }
+
+    if ($command === 'integration:test') {
+        $stdout("Povezujem se na {$integration->baseUrl()} kao {$integration->username} ...");
+        $stdout();
+
+        $tester = new ConnectionTester($repo, new ClientFactory());
+        $result = $tester->test($integration);
+
+        if (!$result->ok) {
+            $stderr('NEUSPESNO');
+            $stderr();
+            $stderr('  ' . $result->message);
+            exit(1);
+        }
+
+        $stdout('USPESNO');
+        $stdout();
+        $stdout(sprintf('  dijalekt API-ja   %s', $result->flavor));
+        $stdout(sprintf('  verzija vCentera  %s', $result->productVersion ?? 'nedostupna (nalog nema prava na /appliance)'));
+        $stdout(sprintf('  HTTP poziva       %d', $result->callCount));
+        $stdout();
+
+        foreach ($result->counts as $label => $value) {
+            $stdout(sprintf('  %-14s %s', $label, $value === null ? 'preko limita liste' : $value));
+        }
+
+        if ($result->notes !== []) {
+            $stdout();
+            $stdout('Napomene:');
+
+            foreach ($result->notes as $note) {
+                $stdout('  - ' . $note);
+            }
+        }
+
+        $stdout();
+        exit(0);
     }
 
     if ($command === 'integration:password') {
