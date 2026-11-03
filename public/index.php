@@ -131,6 +131,8 @@ try {
         $router->get('/vms/export', $inventory->exportVms(...));
         $router->get('/vms/{id}', $inventory->vm(...));
         $router->get('/hosts', $inventory->hosts(...));
+        $router->get('/hosts/export', $inventory->exportHosts(...));
+        $router->get('/hosts/{id}', $inventory->host(...));
         $router->get('/clusters', $inventory->clusters(...));
         $router->get('/runs', $runs->index(...));
 
