@@ -150,6 +150,49 @@ final class IntegrationRepository
         return (int) $this->pdo->lastInsertId();
     }
 
+    /**
+     * Izmeni sve osim lozinke (za nju postoji updatePassword()).
+     */
+    public function update(
+        int $id,
+        string $name,
+        string $hostname,
+        int $port,
+        string $username,
+        string $apiFlavor,
+        bool $verifyPeer,
+    ): void {
+        $existing = $this->findByEndpoint('vcenter', $hostname, $port);
+
+        if ($existing !== null && $existing->id !== $id) {
+            throw new RuntimeException(
+                "Druga integracija vec koristi {$hostname}:{$port}."
+            );
+        }
+
+        $stmt = $this->pdo->prepare(
+            'UPDATE integration
+                SET name        = :name,
+                    hostname    = :hostname,
+                    port        = :port,
+                    username    = :username,
+                    api_flavor  = :api_flavor,
+                    verify_peer = :verify_peer,
+                    updated_at  = UTC_TIMESTAMP()
+              WHERE id = :id'
+        );
+
+        $stmt->bindValue('name', $name);
+        $stmt->bindValue('hostname', $hostname);
+        $stmt->bindValue('port', $port, PDO::PARAM_INT);
+        $stmt->bindValue('username', $username);
+        $stmt->bindValue('api_flavor', $apiFlavor);
+        $stmt->bindValue('verify_peer', $verifyPeer ? 1 : 0, PDO::PARAM_INT);
+        $stmt->bindValue('id', $id, PDO::PARAM_INT);
+
+        $stmt->execute();
+    }
+
     public function updatePassword(int $id, #[SensitiveParameter] string $password): void
     {
         $stmt = $this->pdo->prepare(
