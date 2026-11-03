@@ -78,6 +78,10 @@ $flavorLabel = [
                         <?php endif; ?>
                     </td>
                     <td class="row-actions">
+                        <form method="post" action="/integrations/<?= $e($i->id) ?>/test">
+                            <input type="hidden" name="csrf" value="<?= $e($csrf) ?>">
+                            <button type="submit" class="btn-link">Proveri vezu</button>
+                        </form>
                         <a href="/integrations/<?= $e($i->id) ?>/edit" class="btn-link">Izmeni</a>
                         <form method="post" action="/integrations/<?= $e($i->id) ?>/state">
                             <input type="hidden" name="csrf" value="<?= $e($csrf) ?>">
