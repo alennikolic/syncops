@@ -1,0 +1,120 @@
+# docker-compose.yml
+#
+# SyncOPS — lokalno razvojno okruženje
+# Pokretanje:  cp .env.example .env  &&  docker compose up -d
+# GUI:         http://localhost:8080  (ili WEB_PORT iz .env)
+
+services:
+
+  # ---------------------------------------------------------------
+  # nginx — jedini servis izložen prema spolja.
+  # Document root je ./public, ostatak repozitorijuma nije dostupan.
+  # ---------------------------------------------------------------
+  web:
+    image: nginx:1.27-alpine
+    container_name: syncops-web
+    restart: unless-stopped
+    ports:
+      - "${WEB_PORT:-8080}:80"
+    volumes:
+      - ./public:/app/public:ro
+      - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      app:
+        condition: service_started
+    networks:
+      - syncops
+
+  # ---------------------------------------------------------------
+  # php-fpm — aplikacija. Nema mapiran port; dostupan je samo
+  # nginx-u i to preko interne mreže na portu 9000.
+  # Ceo repozitorijum je bind-mountovan radi razvoja.
+  # ---------------------------------------------------------------
+  app:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: syncops-app
+    restart: unless-stopped
+    volumes:
+      - .:/app
+    environment:
+      TZ: UTC
+      APP_ENV: ${APP_ENV:-dev}
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      SECRET_KEY: ${SECRET_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - syncops
+
+  # ---------------------------------------------------------------
+  # MySQL. Port je mapiran na host samo radi razvoja (DBeaver,
+  # HeidiSQL). Na produkciji obrisati ceo "ports" blok.
+  # ---------------------------------------------------------------
+  db:
+    image: mysql:8.4
+    container_name: syncops-db
+    restart: unless-stopped
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_0900_ai_ci
+      - --default-time-zone=+00:00
+    environment:
+      TZ: UTC
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    ports:
+      - "${DB_PORT_HOST:-3307}:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+    networks:
+      - syncops
+
+  # ---------------------------------------------------------------
+  # CLI worker — isti image kao "app", drugi entrypoint.
+  # Zakomentarisan dok bin/syncops ne postoji; tada samo odkomentarisati.
+  # ---------------------------------------------------------------
+  # worker:
+  #   build:
+  #     context: .
+  #     dockerfile: docker/php/Dockerfile
+  #   container_name: syncops-worker
+  #   restart: unless-stopped
+  #   command: ["php", "/app/bin/syncops", "worker"]
+  #   volumes:
+  #     - .:/app
+  #   environment:
+  #     TZ: UTC
+  #     APP_ENV: ${APP_ENV:-dev}
+  #     DB_HOST: db
+  #     DB_PORT: 3306
+  #     DB_NAME: ${DB_NAME}
+  #     DB_USER: ${DB_USER}
+  #     DB_PASSWORD: ${DB_PASSWORD}
+  #     SECRET_KEY: ${SECRET_KEY}
+  #   depends_on:
+  #     db:
+  #       condition: service_healthy
+  #   networks:
+  #     - syncops
+
+volumes:
+  db_data:
+
+networks:
+  syncops:
+    driver: bridge
