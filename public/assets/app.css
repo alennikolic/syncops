@@ -1,0 +1,373 @@
+/* public/assets/app.css
+ *
+ * SyncOPS GUI.
+ *
+ * Nacelo: baza je tiha, jedine zasicene boje na ekranu su STANJA.
+ * Akcenat je indigo da se ne sudara sa zelenim/crvenim/amber znacenjem.
+ * Monospace iskljucivo za podatke (moref, UUID, IP, brojaci, UTC vremena).
+ */
+
+:root {
+    color-scheme: light dark;
+
+    --bg:        #f4f5f7;
+    --surface:   #ffffff;
+    --surface-2: #fafbfc;
+    --line:      #dfe3e8;
+    --ink:       #1a1d21;
+    --ink-soft:  #5b6572;
+    --accent:    #5a3fd6;
+    --accent-ink:#ffffff;
+
+    --ok:   #1f8a4c;
+    --warn: #b45309;
+    --bad:  #c02626;
+    --idle: #9aa3ae;
+
+    --radius: 6px;
+    --rail:   3px;
+
+    --font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+            "Helvetica Neue", Arial, sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+            "Liberation Mono", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --bg:        #121418;
+        --surface:   #1a1d23;
+        --surface-2: #15181d;
+        --line:      #2a2f38;
+        --ink:       #e8eaed;
+        --ink-soft:  #949da9;
+        --accent:    #9b87f5;
+        --accent-ink:#17141f;
+
+        --ok:   #4ade80;
+        --warn: #fbbf24;
+        --bad:  #f87171;
+        --idle: #6b7482;
+    }
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font);
+    font-size: 15px;
+    line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+}
+
+/* ------------------------------------------------------------------ */
+/* Okvir: bocna navigacija + sadrzaj                                    */
+/* ------------------------------------------------------------------ */
+
+.shell { display: flex; min-height: 100vh; }
+
+.sidebar {
+    width: 208px;
+    flex: 0 0 208px;
+    background: var(--surface);
+    border-right: 1px solid var(--line);
+    padding: 20px 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.brand {
+    padding: 0 20px 20px;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+}
+.brand span { color: var(--accent); }
+
+.nav { display: flex; flex-direction: column; gap: 1px; }
+
+.nav a {
+    padding: 7px 20px;
+    color: var(--ink-soft);
+    border-left: var(--rail) solid transparent;
+    font-size: 14px;
+}
+.nav a:hover { color: var(--ink); background: var(--surface-2); text-decoration: none; }
+.nav a[aria-current="page"] {
+    color: var(--ink);
+    border-left-color: var(--accent);
+    font-weight: 550;
+}
+
+.sidebar-foot {
+    margin-top: auto;
+    padding: 16px 20px 0;
+    border-top: 1px solid var(--line);
+    font-size: 13px;
+    color: var(--ink-soft);
+}
+.sidebar-foot form { margin: 6px 0 0; }
+.sidebar-foot button {
+    background: none; border: 0; padding: 0;
+    color: var(--ink-soft); font: inherit; cursor: pointer;
+}
+.sidebar-foot button:hover { color: var(--ink); text-decoration: underline; }
+
+.main { flex: 1 1 auto; min-width: 0; padding: 28px 32px 56px; }
+
+.page-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 16px;
+    margin-bottom: 20px;
+}
+.page-head h1 {
+    margin: 0;
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+}
+.page-head p { margin: 4px 0 0; color: var(--ink-soft); font-size: 14px; }
+
+/* ------------------------------------------------------------------ */
+/* Brojaci                                                              */
+/* ------------------------------------------------------------------ */
+
+.counts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+    gap: 1px;
+    background: var(--line);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+    margin-bottom: 24px;
+}
+.count { background: var(--surface); padding: 14px 16px; }
+.count b {
+    display: block;
+    font-family: var(--mono);
+    font-size: 25px;
+    font-weight: 400;
+    letter-spacing: -0.02em;
+}
+.count small { color: var(--ink-soft); font-size: 13px; }
+
+/* ------------------------------------------------------------------ */
+/* Tabela                                                               */
+/* ------------------------------------------------------------------ */
+
+.panel {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    overflow: hidden;
+}
+
+table { width: 100%; border-collapse: collapse; }
+
+th {
+    text-align: left;
+    font-size: 13px;
+    font-weight: 550;
+    color: var(--ink-soft);
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--line);
+    background: var(--surface-2);
+    white-space: nowrap;
+}
+td {
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--line);
+    vertical-align: middle;
+}
+tr:last-child td { border-bottom: 0; }
+
+/* Kicma stanja: boja uz levu ivicu reda umesto badge-a u redu. */
+td.rail {
+    border-left: var(--rail) solid var(--idle);
+    padding-left: 11px;
+}
+td.rail-ok   { border-left-color: var(--ok); }
+td.rail-warn { border-left-color: var(--warn); }
+td.rail-bad  { border-left-color: var(--bad); }
+td.rail-idle { border-left-color: var(--idle); }
+
+.data { font-family: var(--mono); font-size: 13px; }
+.muted { color: var(--ink-soft); }
+.state-ok   { color: var(--ok); }
+.state-warn { color: var(--warn); }
+.state-bad  { color: var(--bad); }
+
+.row-actions { text-align: right; white-space: nowrap; }
+.row-actions form { display: inline; }
+
+/* ------------------------------------------------------------------ */
+/* Prazno stanje                                                        */
+/* ------------------------------------------------------------------ */
+
+.empty { padding: 40px 24px; text-align: center; color: var(--ink-soft); }
+.empty p { margin: 0 0 14px; }
+
+/* ------------------------------------------------------------------ */
+/* Dugmad                                                               */
+/* ------------------------------------------------------------------ */
+
+.btn {
+    display: inline-block;
+    padding: 7px 14px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    font-size: 14px;
+    cursor: pointer;
+}
+.btn:hover { background: var(--surface-2); text-decoration: none; }
+
+.btn-primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: var(--accent-ink);
+    font-weight: 550;
+}
+.btn-primary:hover { background: var(--accent); filter: brightness(1.08); }
+
+.btn-link {
+    border: 0; background: none; padding: 4px 6px;
+    color: var(--ink-soft); font-size: 14px;
+}
+.btn-link:hover { color: var(--ink); background: none; text-decoration: underline; }
+.btn-link.danger:hover { color: var(--bad); }
+
+/* ------------------------------------------------------------------ */
+/* Forma                                                                */
+/* ------------------------------------------------------------------ */
+
+.form { max-width: 34rem; }
+.form .panel { padding: 20px; }
+
+.field { margin-bottom: 16px; }
+.field:last-of-type { margin-bottom: 0; }
+
+.field label { display: block; font-size: 14px; font-weight: 550; margin-bottom: 4px; }
+.field .hint { display: block; color: var(--ink-soft); font-size: 13px; margin-bottom: 6px; }
+
+input[type="text"],
+input[type="password"],
+input[type="number"],
+select {
+    width: 100%;
+    padding: 7px 10px;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    background: var(--surface-2);
+    color: var(--ink);
+    font: inherit;
+    font-size: 14px;
+}
+input[type="text"]:focus,
+input[type="password"]:focus,
+input[type="number"]:focus,
+select:focus { border-color: var(--accent); outline: none; background: var(--surface); }
+
+.field-inline { display: flex; align-items: center; gap: 8px; }
+.field-inline input { width: auto; }
+.field-inline label { margin: 0; font-weight: 400; }
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-top: 20px;
+}
+
+.form-grid { display: grid; grid-template-columns: 1fr 120px; gap: 0 14px; }
+
+/* ------------------------------------------------------------------ */
+/* Poruke                                                               */
+/* ------------------------------------------------------------------ */
+
+.flash {
+    padding: 10px 14px;
+    border: 1px solid var(--line);
+    border-left: var(--rail) solid var(--ok);
+    border-radius: var(--radius);
+    background: var(--surface);
+    margin-bottom: 18px;
+    font-size: 14px;
+}
+.flash-error { border-left-color: var(--bad); }
+
+.errors {
+    margin: 0 0 18px;
+    padding: 10px 14px 10px 30px;
+    border: 1px solid var(--line);
+    border-left: var(--rail) solid var(--bad);
+    border-radius: var(--radius);
+    background: var(--surface);
+    font-size: 14px;
+}
+.errors li { margin: 2px 0; }
+
+/* ------------------------------------------------------------------ */
+/* Prijava                                                              */
+/* ------------------------------------------------------------------ */
+
+.login-shell {
+    min-height: 100vh;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+}
+.login { width: 100%; max-width: 20rem; }
+.login .brand { padding: 0 0 18px; font-size: 19px; }
+.login .panel { padding: 20px; }
+
+/* ------------------------------------------------------------------ */
+/* Uzak ekran                                                           */
+/* ------------------------------------------------------------------ */
+
+@media (max-width: 720px) {
+    .shell { flex-direction: column; }
+    .sidebar {
+        width: auto; flex: none;
+        border-right: 0;
+        border-bottom: 1px solid var(--line);
+        padding: 14px 0 0;
+    }
+    .brand { padding: 0 16px 10px; }
+    .nav { flex-direction: row; overflow-x: auto; }
+    .nav a {
+        border-left: 0;
+        border-bottom: var(--rail) solid transparent;
+        padding: 6px 14px;
+    }
+    .nav a[aria-current="page"] { border-left: 0; border-bottom-color: var(--accent); }
+    .sidebar-foot {
+        margin: 0;
+        display: flex; gap: 12px; align-items: baseline;
+        padding: 10px 16px;
+    }
+    .main { padding: 20px 16px 40px; }
+    .form-grid { grid-template-columns: 1fr; }
+    .panel { overflow-x: auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+}
