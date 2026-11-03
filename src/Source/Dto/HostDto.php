@@ -11,7 +11,7 @@ declare(strict_types=1);
 
 namespace SyncOps\Source\Dto;
 
-final class HostDto
+final class HostDto implements InventoryDto
 {
     public const SOURCE_REST = 'rest';
     public const SOURCE_SOAP = 'soap';
@@ -71,6 +71,16 @@ final class HostDto
             'bios_version'     => $this->biosVersion,
             'hardware_uuid'    => $this->hardwareUuid,
         ];
+    }
+
+    public function moref(): string
+    {
+        return $this->moref;
+    }
+
+    public function rawPayload(): string
+    {
+        return $this->rawPayload;
     }
 
     public function hash(): string
