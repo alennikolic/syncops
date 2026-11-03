@@ -41,6 +41,17 @@ final class DiscoveryRunner
     }
 
     /**
+     * Stavi posao u red cekanja, bez izvrsavanja. Koristi GUI i zakazivanje:
+     * prikupljanje ume da traje minutima i ne sme da ide kroz web zahtev.
+     */
+    public function enqueue(Integration $integration, string $trigger = RunStatus::TRIGGER_GUI): int
+    {
+        return $this->runs->create($integration->id, $trigger);
+    }
+
+    /**
+     * Otvori posao i odmah ga izvrsi. Koristi CLI, kada se ceka ishod.
+     *
      * @param callable(string, int, int): void|null $progress
      */
     public function run(
@@ -48,8 +59,20 @@ final class DiscoveryRunner
         string $trigger = RunStatus::TRIGGER_CLI,
         ?callable $progress = null,
     ): RunOutcome {
-        $runId = $this->runs->create($integration->id, $trigger);
+        return $this->execute($this->runs->create($integration->id, $trigger), $integration, $progress);
+    }
 
+    /**
+     * Izvrsi posao koji vec postoji u bazi — preuzet iz reda cekanja ili
+     * upravo otvoren.
+     *
+     * @param callable(string, int, int): void|null $progress
+     */
+    public function execute(
+        int $runId,
+        Integration $integration,
+        ?callable $progress = null,
+    ): RunOutcome {
         try {
             $this->runs->markRunning($runId);
 
