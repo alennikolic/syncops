@@ -7,7 +7,7 @@ declare(strict_types=1);
 
 namespace SyncOps\Source\Dto;
 
-final class VmDto
+final class VmDto implements InventoryDto
 {
     public const GUEST_AVAILABLE        = 'available';
     public const GUEST_TOOLS_NOT_RUNNING = 'tools_not_running';
@@ -76,6 +76,16 @@ final class VmDto
             'folder_moref'         => $this->folderMoref,
             'datacenter_moref'     => $this->datacenterMoref,
         ];
+    }
+
+    public function moref(): string
+    {
+        return $this->moref;
+    }
+
+    public function rawPayload(): string
+    {
+        return $this->rawPayload;
     }
 
     public function hash(): string
