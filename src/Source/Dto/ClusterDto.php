@@ -11,7 +11,7 @@ declare(strict_types=1);
 
 namespace SyncOps\Source\Dto;
 
-final class ClusterDto
+final class ClusterDto implements InventoryDto
 {
     public function __construct(
         public readonly string $moref,
@@ -41,6 +41,16 @@ final class ClusterDto
             'ha_enabled'       => $this->haEnabled,
             'drs_enabled'      => $this->drsEnabled,
         ];
+    }
+
+    public function moref(): string
+    {
+        return $this->moref;
+    }
+
+    public function rawPayload(): string
+    {
+        return $this->rawPayload;
     }
 
     public function hash(): string
