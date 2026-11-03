@@ -72,6 +72,11 @@ try {
     $view  = new View($root . '/src/Web/View');
 
     // Layout ih ocekuje na svakoj stranici.
+    //
+    // assetVersion visi uz putanju stila da bi izmena CSS-a stigla do
+    // pregledaca odmah: nginx servira /assets/ sa "expires 7d", pa bi se bez
+    // ovoga koristila kesirana verzija jos nedelju dana.
+    $view->share('assetVersion', (string) (@filemtime(__DIR__ . '/assets/app.css') ?: '1'));
     $view->share('csrfGlobal', $auth->csrfToken());
     $view->share('flash', null);
 
