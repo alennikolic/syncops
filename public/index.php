@@ -1,148 +1,136 @@
 <?php
 // public/index.php
 //
-// PRIVREMENA status stranica — sluzi samo da potvrdi da je okruzenje
-// ispravno podignuto (PHP, ekstenzije, konekcija ka bazi).
-//
-// Bice zamenjena pravim front controllerom koji poziva
-// SyncOps\Web\Router cim src/ bude popunjen.
+// Front controller. Nginx preusmerava sve zahteve ovamo (osim postojecih
+// fajlova pod public/), pa je ovo jedina PHP tacka ulaza za web.
 
 declare(strict_types=1);
 
-header('Content-Type: text/html; charset=utf-8');
+$root = dirname(__DIR__);
 
-// --- Provera ekstenzija ---------------------------------------------
-$requiredExtensions = ['pdo_mysql', 'curl', 'sodium', 'json', 'mbstring'];
-$extensions = [];
-foreach ($requiredExtensions as $ext) {
-    $extensions[$ext] = extension_loaded($ext);
+// -----------------------------------------------------------------------
+// Autoload — isto kao u bin/syncops: Composer ako postoji, inace PSR-4.
+// -----------------------------------------------------------------------
+$composerAutoload = $root . '/vendor/autoload.php';
+
+if (is_file($composerAutoload)) {
+    require $composerAutoload;
+} else {
+    spl_autoload_register(static function (string $class) use ($root): void {
+        $prefix = 'SyncOps\\';
+
+        if (!str_starts_with($class, $prefix)) {
+            return;
+        }
+
+        $relative = str_replace('\\', '/', substr($class, strlen($prefix)));
+        $file     = $root . '/src/' . $relative . '.php';
+
+        if (is_file($file)) {
+            require $file;
+        }
+    });
 }
 
-// --- Provera konekcije ka bazi ---------------------------------------
-$dbOk      = false;
-$dbMessage = '';
-$dbVersion = '';
+use SyncOps\Core\Db;
+use SyncOps\Core\Secret;
+use SyncOps\Integration\IntegrationRepository;
+use SyncOps\Web\Auth;
+use SyncOps\Web\Controller\AuthController;
+use SyncOps\Web\Controller\DashboardController;
+use SyncOps\Web\Controller\IntegrationController;
+use SyncOps\Web\Flash;
+use SyncOps\Web\Router;
+use SyncOps\Web\View;
+
+$config = require $root . '/config/config.php';
+
+header('X-Frame-Options: SAMEORIGIN');
+header('X-Content-Type-Options: nosniff');
+header('Referrer-Policy: same-origin');
 
 try {
-    $dsn = sprintf(
-        'mysql:host=%s;port=%s;dbname=%s;charset=utf8mb4',
-        getenv('DB_HOST') ?: 'db',
-        getenv('DB_PORT') ?: '3306',
-        getenv('DB_NAME') ?: ''
-    );
+    // -------------------------------------------------------------------
+    // Sastavljanje
+    // -------------------------------------------------------------------
+    $auth = new Auth($config['app']['password_hash']);
+    $auth->start();
 
-    $pdo = new PDO(
-        $dsn,
-        getenv('DB_USER') ?: '',
-        getenv('DB_PASSWORD') ?: '',
-        [
-            PDO::ATTR_ERRMODE            => PDO::ERRMODE_EXCEPTION,
-            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-            PDO::ATTR_EMULATE_PREPARES   => false,
-            PDO::ATTR_TIMEOUT            => 3,
-        ]
-    );
+    $flash = new Flash();
+    $view  = new View($root . '/src/Web/View');
 
-    $dbVersion = (string) $pdo->query('SELECT VERSION()')->fetchColumn();
-    $dbOk      = true;
+    // Layout ih ocekuje na svakoj stranici.
+    $view->share('csrfGlobal', $auth->csrfToken());
+    $view->share('flash', null);
+
+    $router     = new Router();
+    $authCtrl   = new AuthController($auth, $view, $flash);
+    $path       = (string) parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+    $method     = (string) ($_SERVER['REQUEST_METHOD'] ?? 'GET');
+
+    $router->get('/login', $authCtrl->loginForm(...));
+    $router->post('/login', $authCtrl->login(...));
+    $router->post('/logout', $authCtrl->logout(...));
+
+    // -------------------------------------------------------------------
+    // Sve ostalo zahteva prijavu
+    // -------------------------------------------------------------------
+    $isPublic = in_array($path, ['/login', '/logout'], true);
+
+    if (!$isPublic && !$auth->check()) {
+        header('Location: /login');
+        exit;
+    }
+
+    if (!$isPublic) {
+        // Poruka se cita tek ovde, da je stranica prijave ne pojede.
+        $view->share('flash', $flash->take());
+
+        $pdo   = Db::connect($config['db'], retries: 2);
+        $repo  = new IntegrationRepository($pdo, new Secret($config['secret_key']));
+
+        $dashboard   = new DashboardController($pdo, $repo, $view);
+        $integration = new IntegrationController($repo, $view, $auth, $flash);
+
+        $router->get('/', $dashboard->index(...));
+
+        $router->get('/integrations', $integration->index(...));
+        $router->get('/integrations/new', $integration->createForm(...));
+        $router->post('/integrations', $integration->create(...));
+        $router->get('/integrations/{id}/edit', $integration->editForm(...));
+        $router->post('/integrations/{id}', $integration->update(...));
+        $router->post('/integrations/{id}/state', $integration->toggle(...));
+    }
+
+    if (!$router->dispatch($method, $path)) {
+        http_response_code(404);
+        echo '<!DOCTYPE html><html lang="sr"><head><meta charset="utf-8">'
+            . '<title>Stranica ne postoji · SyncOPS</title>'
+            . '<link rel="stylesheet" href="/assets/app.css"></head><body>'
+            . '<div class="login-shell"><div class="login">'
+            . '<div class="brand">Sync<span>OPS</span></div>'
+            . '<div class="panel"><p style="margin:0">Ta stranica ne postoji. '
+            . '<a href="/">Nazad na pregled</a>.</p></div>'
+            . '</div></div></body></html>';
+    }
 } catch (Throwable $e) {
-    $dbMessage = $e->getMessage();
+    http_response_code(500);
+
+    error_log('SyncOPS: ' . $e->getMessage() . ' @ ' . $e->getFile() . ':' . $e->getLine());
+
+    $isDev   = ($config['env'] ?? 'dev') === 'dev';
+    $details = $isDev
+        ? '<pre class="data" style="white-space:pre-wrap">'
+            . htmlspecialchars($e->getMessage() . "\n\n" . $e->getTraceAsString(), ENT_QUOTES)
+            . '</pre>'
+        : '<p class="muted" style="margin:0">Detalji su u logu kontejnera: '
+            . '<code class="data">docker compose logs app</code></p>';
+
+    echo '<!DOCTYPE html><html lang="sr"><head><meta charset="utf-8">'
+        . '<title>Greška · SyncOPS</title>'
+        . '<link rel="stylesheet" href="/assets/app.css"></head><body>'
+        . '<div class="login-shell"><div class="login" style="max-width:40rem">'
+        . '<div class="brand">Sync<span>OPS</span></div>'
+        . '<div class="panel"><p style="margin-top:0">Zahtev nije mogao da se obradi.</p>'
+        . $details . '</div></div></div></body></html>';
 }
-
-// --- Provera kljuca ---------------------------------------------------
-$secretRaw = (string) (getenv('SECRET_KEY') ?: '');
-$secretOk  = $secretRaw !== '' && strlen((string) base64_decode($secretRaw, true)) === 32;
-
-$allOk = $dbOk && $secretOk && !in_array(false, $extensions, true);
-
-/** Mali helper za badge */
-function badge(bool $ok): string
-{
-    return $ok
-        ? '<span class="ok">OK</span>'
-        : '<span class="bad">GRESKA</span>';
-}
-?>
-<!DOCTYPE html>
-<html lang="sr">
-<head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>SyncOPS — status okruzenja</title>
-    <style>
-        :root { color-scheme: light dark; }
-        body {
-            font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
-            line-height: 1.5;
-            max-width: 48rem;
-            margin: 3rem auto;
-            padding: 0 1.25rem;
-        }
-        h1 { font-size: 1.5rem; margin-bottom: 0.25rem; }
-        .sub { opacity: 0.65; margin-top: 0; font-size: 0.9rem; }
-        table { border-collapse: collapse; width: 100%; margin: 1.5rem 0; }
-        th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid rgba(128,128,128,0.25); }
-        th { font-weight: 600; width: 40%; }
-        code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.875em; }
-        .ok  { color: #15803d; font-weight: 600; }
-        .bad { color: #b91c1c; font-weight: 600; }
-        .banner { padding: 0.75rem 1rem; border-radius: 0.5rem; margin: 1.5rem 0; }
-        .banner.ok  { background: rgba(21,128,61,0.12); }
-        .banner.bad { background: rgba(185,28,28,0.12); }
-        .note { opacity: 0.7; font-size: 0.875rem; border-top: 1px solid rgba(128,128,128,0.25); padding-top: 1rem; margin-top: 2rem; }
-        pre { white-space: pre-wrap; word-break: break-word; font-size: 0.8125rem; }
-    </style>
-</head>
-<body>
-
-<h1>SyncOPS</h1>
-<p class="sub">Status razvojnog okruzenja &middot; <?= date('Y-m-d H:i:s') ?> UTC</p>
-
-<div class="banner <?= $allOk ? 'ok' : 'bad' ?>">
-    <?= $allOk
-        ? 'Okruzenje je ispravno podignuto. Sledeci korak: migracije baze.'
-        : 'Nesto nije podeseno kako treba — vidi stavke oznacene kao GRESKA.' ?>
-</div>
-
-<table>
-    <tr>
-        <th>PHP</th>
-        <td><?= badge(PHP_VERSION_ID >= 80300) ?> <code><?= PHP_VERSION ?></code></td>
-    </tr>
-    <tr>
-        <th>Vremenska zona</th>
-        <td><?= badge(date_default_timezone_get() === 'UTC') ?> <code><?= date_default_timezone_get() ?></code></td>
-    </tr>
-    <?php foreach ($extensions as $name => $loaded): ?>
-    <tr>
-        <th>Ekstenzija <code><?= htmlspecialchars($name) ?></code></th>
-        <td><?= badge($loaded) ?></td>
-    </tr>
-    <?php endforeach; ?>
-    <tr>
-        <th>Konekcija ka bazi</th>
-        <td>
-            <?= badge($dbOk) ?>
-            <?php if ($dbOk): ?>
-                MySQL <code><?= htmlspecialchars($dbVersion) ?></code>
-            <?php endif; ?>
-        </td>
-    </tr>
-    <tr>
-        <th><code>SECRET_KEY</code></th>
-        <td><?= badge($secretOk) ?> <?= $secretOk ? '32 bajta, base64' : 'nedostaje ili nije 32 bajta u base64 zapisu' ?></td>
-    </tr>
-</table>
-
-<?php if (!$dbOk && $dbMessage !== ''): ?>
-<h2 style="font-size:1rem;">Greska pri konekciji</h2>
-<pre><?= htmlspecialchars($dbMessage) ?></pre>
-<?php endif; ?>
-
-<p class="note">
-    Ovo je privremena stranica. Zamenjuje se front controllerom
-    (<code>SyncOps\Web\Router</code>) kada <code>src/</code> bude popunjen.
-</p>
-
-</body>
-</html>
