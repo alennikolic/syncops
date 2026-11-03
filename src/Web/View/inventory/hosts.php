@@ -46,7 +46,9 @@ $stateLabel = [
                     <th>Klaster</th>
                     <th>Mašina</th>
                     <th>Hardver</th>
-                    <th>Poslednji put viđeno</th>
+                    <th>CPU / RAM</th>
+                    <th>ESXi</th>
+                    <th>Viđeno</th>
                 </tr>
             </thead>
             <tbody>
@@ -75,12 +77,34 @@ $stateLabel = [
                     </td>
                     <td><?= $e($host['cluster_name'] ?? '—') ?></td>
                     <td class="data"><?= $e($host['vm_count']) ?></td>
-                    <td>
+                    <td class="stacked">
                         <?php if ($host['hardware_source'] === null): ?>
                             <span class="muted">nije prikupljeno</span>
                         <?php else: ?>
-                            <span class="data"><?= $e(trim(($host['vendor'] ?? '') . ' ' . ($host['model'] ?? '')) ?: '—') ?></span>
-                            <div class="data muted"><?= $e($host['serial_number'] ?? '—') ?></div>
+                            <span><?= $e(trim(($host['vendor'] ?? '') . ' ' . ($host['model'] ?? '')) ?: '—') ?></span>
+                            <span class="sub data">SN <?= $e($host['serial_number'] ?? '—') ?></span>
+                        <?php endif; ?>
+                    </td>
+
+                    <td class="stacked">
+                        <?php if ($host['cpu_cores'] !== null || $host['memory_bytes'] !== null): ?>
+                            <span class="data">
+                                <?= $e($host['cpu_sockets'] ?? '?') ?>&times;<?= $e($host['cpu_cores'] ?? '?') ?> jezgara
+                            </span>
+                            <span class="sub data">
+                                <?= $host['memory_bytes'] === null ? '—' : $e(round((int) $host['memory_bytes'] / 1024 ** 3)) . ' GiB' ?>
+                            </span>
+                        <?php else: ?>
+                            <span class="muted">—</span>
+                        <?php endif; ?>
+                    </td>
+
+                    <td class="stacked">
+                        <?php if ($host['esxi_version'] !== null): ?>
+                            <span class="data">ESXi <?= $e($host['esxi_version']) ?></span>
+                            <span class="sub data">build <?= $e($host['esxi_build'] ?? '—') ?></span>
+                        <?php else: ?>
+                            <span class="muted">—</span>
                         <?php endif; ?>
                     </td>
                     <td>
@@ -99,8 +123,11 @@ $stateLabel = [
 
 <?php if ($result['rows'] !== [] && array_filter($result['rows'], static fn ($h) => $h['hardware_source'] === null) !== []): ?>
     <p class="note-block">
-        Hardverski podaci su prazni jer ih vSphere REST API ne daje — ni proizvođača, ni model,
-        ni serijski broj. Popuniće se kada se doda SOAP klijent.
+        Hardverski podaci se prikupljaju preko SOAP krajnje tačke <code class="data">/sdk</code>, jer ih
+        REST API ne daje. Kada za neki host piše „nije prikupljeno", razlog je jedan od tri: host je
+        odvojen pa nema šta da javi, <code class="data">/sdk</code> nije dostupan, ili nalog nema pravo
+        čitanja. Razlog stoji uz odgovarajuće prikupljanje, na stranici
+        <a href="/runs">Prikupljanja</a>.
     </p>
 <?php endif; ?>
 
