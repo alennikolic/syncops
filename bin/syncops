@@ -13,6 +13,7 @@
 //   bin/syncops integration:add          dodaj integraciju (interaktivno)
 //   bin/syncops integration:test <id>    proveri konekciju na vCenter
 //   bin/syncops collect:dry <id>         prikupi i ispisi, BEZ upisa u bazu
+//   bin/syncops discover <id>            prikupi i UPISI u bazu
 //   bin/syncops integration:password <id>  promeni lozinku
 //   bin/syncops integration:enable <id>
 //   bin/syncops integration:disable <id>
@@ -62,10 +63,17 @@ use SyncOps\Core\Migrator;
 use SyncOps\Core\Secret;
 use SyncOps\Integration\Integration;
 use SyncOps\Integration\IntegrationRepository;
+use SyncOps\Run\DiscoveryRunner;
+use SyncOps\Run\RunRepository;
+use SyncOps\Run\RunStatus;
 use SyncOps\Source\VCenter\Client\ClientFactory;
 use SyncOps\Source\VCenter\CollectionResult;
 use SyncOps\Source\VCenter\ConnectionTester;
 use SyncOps\Source\VCenter\VCenterSource;
+use SyncOps\Storage\RawStore;
+use SyncOps\Storage\Repository\ClusterRepository;
+use SyncOps\Storage\Repository\HostRepository;
+use SyncOps\Storage\Repository\VmRepository;
 use SyncOps\Web\Auth;
 
 // -----------------------------------------------------------------------
@@ -123,6 +131,7 @@ $usage = static function () use ($stdout): void {
     $stdout('  integration:add               Dodaj integraciju (interaktivno)');
     $stdout('  integration:test <id>         Proveri konekciju na vCenter');
     $stdout('  collect:dry <id>              Prikupi i ispisi, bez upisa u bazu');
+    $stdout('  discover <id>                 Prikupi i upisi u bazu');
     $stdout('  integration:password <id>     Promeni lozinku');
     $stdout('  integration:enable <id>       Aktiviraj');
     $stdout('  integration:disable <id>      Deaktiviraj');
@@ -149,6 +158,7 @@ $known = [
     'integration:add',
     'integration:test',
     'collect:dry',
+    'discover',
     'integration:password',
     'integration:enable',
     'integration:disable',
@@ -560,6 +570,107 @@ try {
 
         unset($result);
         exit(0);
+    }
+
+    if ($command === 'discover') {
+        $runs  = new RunRepository($pdo);
+        $stale = $runs->stale();
+
+        if ($stale !== []) {
+            $stdout('Napomena: zatecen je run bez znaka zivota duze od 30 minuta:');
+
+            foreach ($stale as $row) {
+                $stdout(sprintf(
+                    '  run #%d, integracija %d, poslednji znak zivota %s UTC',
+                    $row['id'],
+                    $row['integration_id'],
+                    (string) ($row['heartbeat_at'] ?? $row['queued_at'])
+                ));
+            }
+
+            $stdout('Oznaci ga kao neuspeo pre nego sto pokrenes nov nad istom integracijom.');
+            $stdout();
+        }
+
+        $runner = new DiscoveryRunner(
+            $pdo,
+            $repo,
+            $runs,
+            new VCenterSource(new ClientFactory(timeout: 60)),
+            new RawStore($pdo),
+            new ClusterRepository($pdo),
+            new HostRepository($pdo),
+            new VmRepository($pdo),
+        );
+
+        $stdout("Prikupljam sa {$integration->baseUrl()} i upisujem u bazu.");
+        $stdout();
+
+        $phase = '';
+        $outcome = $runner->run(
+            $integration,
+            RunStatus::TRIGGER_CLI,
+            function (string $p, int $done, int $total) use (&$phase, $stdout): void {
+                if ($p !== $phase) {
+                    $phase = $p;
+                    fwrite(STDOUT, '  ' . $p . ' ');
+                }
+
+                if ($total > 0) {
+                    if ($done % 10 === 0 || $done === $total) {
+                        fwrite(STDOUT, '.');
+                    }
+
+                    if ($done === $total) {
+                        $stdout(' ' . $total);
+                    }
+                } else {
+                    $stdout('...');
+                }
+            }
+        );
+
+        $stdout();
+        $stdout(sprintf(
+            'Run #%d zavrsen sa ishodom: %s (%.1f s, %d HTTP poziva).',
+            $outcome->runId,
+            strtoupper($outcome->status),
+            $outcome->collection->durationSeconds,
+            $outcome->collection->apiCalls
+        ));
+        $stdout();
+
+        $stdout(sprintf('  %-10s %8s %8s %10s %10s', 'TIP', 'NADJENO', 'NOVIH', 'IZMENJENIH', 'ISTIH'));
+
+        foreach ($outcome->stats as $type => $s) {
+            $stdout(sprintf(
+                '  %-10s %8d %8d %10d %10d',
+                $type,
+                $s['found'],
+                $s['created'],
+                $s['changed'],
+                $s['unchanged']
+            ));
+        }
+
+        if ($outcome->collection->failures !== []) {
+            $stdout();
+            $stdout('NEUSPESI (' . count($outcome->collection->failures) . '):');
+
+            foreach (array_slice($outcome->collection->failures, 0, 10) as $failure) {
+                $stdout('  - ' . $failure);
+            }
+        }
+
+        $stdout();
+
+        if (!$outcome->isSuccess()) {
+            $stdout('Run nije potpun — kasnija obrada ne sme da zakljucuje da je objekat obrisan');
+            $stdout('na osnovu last_seen iz ovog run-a.');
+            $stdout();
+        }
+
+        exit($outcome->isSuccess() ? 0 : 1);
     }
 
     if ($command === 'integration:password') {
