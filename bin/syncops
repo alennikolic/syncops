@@ -8,6 +8,7 @@
 //   bin/syncops migrate                  primeni sve neprimenjene migracije
 //   bin/syncops migrate:status           prikazi stanje migracija, bez izmena
 //   bin/syncops key:generate             generisi vrednost za SECRET_KEY
+//   bin/syncops password:hash            generisi APP_PASSWORD_HASH za GUI
 //   bin/syncops integrations             izlistaj integracije
 //   bin/syncops integration:add          dodaj integraciju (interaktivno)
 //   bin/syncops integration:password <id>  promeni lozinku
@@ -59,6 +60,7 @@ use SyncOps\Core\Migrator;
 use SyncOps\Core\Secret;
 use SyncOps\Integration\Integration;
 use SyncOps\Integration\IntegrationRepository;
+use SyncOps\Web\Auth;
 
 // -----------------------------------------------------------------------
 // Pomocne funkcije za ispis i unos
@@ -119,6 +121,7 @@ $usage = static function () use ($stdout): void {
     $stdout();
     $stdout('Ostalo:');
     $stdout('  key:generate                  Generisi vrednost za SECRET_KEY');
+    $stdout('  password:hash                 Generisi APP_PASSWORD_HASH za GUI');
     $stdout('  help                          Ovaj ispis');
     $stdout();
 };
@@ -133,6 +136,7 @@ $known = [
     'migrate',
     'migrate:status',
     'key:generate',
+    'password:hash',
     'integrations',
     'integration:add',
     'integration:password',
@@ -152,9 +156,31 @@ if (!in_array($command, $known, true)) {
     exit(1);
 }
 
-// key:generate ne zahteva ni bazu ni konfiguraciju.
+// Ove dve komande ne zahtevaju ni bazu ni konfiguraciju.
 if ($command === 'key:generate') {
     $stdout(Secret::generateKey());
+    exit(0);
+}
+
+if ($command === 'password:hash') {
+    $password = $askSecret('Lozinka za pristup GUI-ju');
+
+    if (strlen($password) < 8) {
+        $stderr('Lozinka mora imati bar 8 znakova.');
+        exit(1);
+    }
+
+    if ($askSecret('Ponovi lozinku') !== $password) {
+        $stderr('Lozinke se ne poklapaju.');
+        exit(1);
+    }
+
+    $stdout();
+    $stdout('Upisi ovo u .env, pod jednostrukim navodnicima (hash sadrzi znak $):');
+    $stdout();
+    $stdout("APP_PASSWORD_HASH='" . Auth::hashPassword($password) . "'");
+    $stdout();
+    $stdout('Zatim: docker compose restart app');
     exit(0);
 }
 
