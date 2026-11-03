@@ -71,11 +71,28 @@ final class ConnectionTester
         // Hostovi i masine mogu da premase limit liste. To nije greska u
         // konfiguraciji nego podatak koji odredjuje kako ce kolektor raditi,
         // pa se belezi kao napomena a provera se nastavlja.
+        $hosts = [];
+
         try {
-            $counts['hostovi'] = count($client->listHosts());
+            $hosts = $client->listHosts();
+            $counts['hostovi'] = count($hosts);
         } catch (VCenterException $e) {
             $counts['hostovi'] = null;
             $notes[] = $e->getMessage();
+        }
+
+        // Probna provera SOAP-a na prvom hostu: bolje da se sazna sada nego
+        // da se otkrije tek posle prvog prikupljanja.
+        if ($hosts !== []) {
+            $firstHost = (string) ($hosts[0]['host'] ?? '');
+
+            if ($firstHost !== '' && $client->getHostHardware($firstHost) !== null) {
+                $counts['hardver hostova'] = 1;
+            } else {
+                $counts['hardver hostova'] = null;
+                $notes[] = 'Hardverski podaci o hostovima nisu dostupni — proveri da li je '
+                         . 'SOAP krajnja tacka /sdk dostupna i da nalog ima pravo citanja.';
+            }
         }
 
         try {
