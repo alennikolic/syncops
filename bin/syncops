@@ -5,12 +5,18 @@
 // Jedini CLI entrypoint aplikacije.
 //
 // Upotreba:
-//   bin/syncops migrate           primeni sve neprimenjene migracije
-//   bin/syncops migrate:status    prikazi stanje migracija, bez izmena
-//   bin/syncops help              spisak komandi
+//   bin/syncops migrate                  primeni sve neprimenjene migracije
+//   bin/syncops migrate:status           prikazi stanje migracija, bez izmena
+//   bin/syncops key:generate             generisi vrednost za SECRET_KEY
+//   bin/syncops integrations             izlistaj integracije
+//   bin/syncops integration:add          dodaj integraciju (interaktivno)
+//   bin/syncops integration:password <id>  promeni lozinku
+//   bin/syncops integration:enable <id>
+//   bin/syncops integration:disable <id>
+//   bin/syncops help
 //
 // U Docker okruzenju:
-//   docker compose exec app bin/syncops migrate
+//   docker compose exec app bin/syncops <komanda>
 
 declare(strict_types=1);
 
@@ -50,20 +56,70 @@ if (is_file($composerAutoload)) {
 
 use SyncOps\Core\Db;
 use SyncOps\Core\Migrator;
+use SyncOps\Core\Secret;
+use SyncOps\Integration\Integration;
+use SyncOps\Integration\IntegrationRepository;
 
 // -----------------------------------------------------------------------
-// Ispis
+// Pomocne funkcije za ispis i unos
 // -----------------------------------------------------------------------
 $stdout = static fn (string $line = '') => fwrite(STDOUT, $line . PHP_EOL);
 $stderr = static fn (string $line = '') => fwrite(STDERR, $line . PHP_EOL);
 
+/** Procitaj red sa tastature, sa opcionom podrazumevanom vrednoscu. */
+$ask = static function (string $question, string $default = ''): string {
+    $suffix = $default !== '' ? " [{$default}]" : '';
+    fwrite(STDOUT, $question . $suffix . ': ');
+
+    $answer = trim((string) fgets(STDIN));
+
+    return $answer !== '' ? $answer : $default;
+};
+
+/** Procitaj lozinku bez ispisivanja na ekran. */
+$askSecret = static function (string $question) use ($stdout): string {
+    fwrite(STDOUT, $question . ': ');
+
+    $echoDisabled = false;
+
+    if (function_exists('shell_exec') && stripos(PHP_OS_FAMILY, 'win') === false) {
+        shell_exec('stty -echo 2>/dev/null');
+        $echoDisabled = true;
+    }
+
+    $value = trim((string) fgets(STDIN));
+
+    if ($echoDisabled) {
+        shell_exec('stty echo 2>/dev/null');
+        $stdout('');
+    }
+
+    return $value;
+};
+
+$askYesNo = static function (string $question, bool $default = false) use ($ask): bool {
+    $answer = strtolower($ask($question . ' (da/ne)', $default ? 'da' : 'ne'));
+
+    return in_array($answer, ['da', 'd', 'yes', 'y', '1'], true);
+};
+
 $usage = static function () use ($stdout): void {
     $stdout('SyncOPS CLI');
     $stdout();
-    $stdout('Komande:');
-    $stdout('  migrate           Primeni sve neprimenjene migracije');
-    $stdout('  migrate:status    Prikazi stanje migracija (bez izmena)');
-    $stdout('  help              Ovaj ispis');
+    $stdout('Migracije:');
+    $stdout('  migrate                       Primeni sve neprimenjene migracije');
+    $stdout('  migrate:status                Prikazi stanje migracija (bez izmena)');
+    $stdout();
+    $stdout('Integracije:');
+    $stdout('  integrations                  Izlistaj integracije');
+    $stdout('  integration:add               Dodaj integraciju (interaktivno)');
+    $stdout('  integration:password <id>     Promeni lozinku');
+    $stdout('  integration:enable <id>       Aktiviraj');
+    $stdout('  integration:disable <id>      Deaktiviraj');
+    $stdout();
+    $stdout('Ostalo:');
+    $stdout('  key:generate                  Generisi vrednost za SECRET_KEY');
+    $stdout('  help                          Ovaj ispis');
     $stdout();
 };
 
@@ -71,100 +127,259 @@ $usage = static function () use ($stdout): void {
 // Dispatch
 // -----------------------------------------------------------------------
 $command = $argv[1] ?? 'help';
+$argument = $argv[2] ?? null;
+
+$known = [
+    'migrate',
+    'migrate:status',
+    'key:generate',
+    'integrations',
+    'integration:add',
+    'integration:password',
+    'integration:enable',
+    'integration:disable',
+];
 
 if (in_array($command, ['help', '-h', '--help'], true)) {
     $usage();
     exit(0);
 }
 
-if (!in_array($command, ['migrate', 'migrate:status'], true)) {
+if (!in_array($command, $known, true)) {
     $stderr("Nepoznata komanda: {$command}");
     $stderr();
     $usage();
     exit(1);
 }
 
+// key:generate ne zahteva ni bazu ni konfiguraciju.
+if ($command === 'key:generate') {
+    $stdout(Secret::generateKey());
+    exit(0);
+}
+
+$config = null;
+
 try {
-    /** @var array{db: array<string, mixed>, paths: array<string, string>, env: string} $config */
+    /** @var array{db: array<string, mixed>, paths: array<string, string>, env: string, secret_key: string} $config */
     $config = require $root . '/config/config.php';
 
-    $pdo      = Db::connect($config['db']);
-    $migrator = new Migrator($pdo, $config['paths']['migrations']);
+    $pdo = Db::connect($config['db']);
 
-    $migrator->ensureTable();
+    // =====================================================================
+    // Migracije
+    // =====================================================================
+    if ($command === 'migrate' || $command === 'migrate:status') {
+        $migrator = new Migrator($pdo, $config['paths']['migrations']);
+        $migrator->ensureTable();
 
-    // --- Provera da niko nije menjao vec primenjenu migraciju ----------
-    $drift = $migrator->drift();
+        $drift = $migrator->drift();
 
-    if ($drift !== []) {
-        $stderr('GRESKA: izmenjene su migracije koje su vec primenjene.');
-        $stderr();
+        if ($drift !== []) {
+            $stderr('GRESKA: izmenjene su migracije koje su vec primenjene.');
+            $stderr();
 
-        foreach ($drift as $item) {
-            $stderr("  {$item['version']}  {$item['name']}");
+            foreach ($drift as $item) {
+                $stderr("  {$item['version']}  {$item['name']}");
+            }
+
+            $stderr();
+            $stderr('Primenjena migracija se ne menja — baza na ovoj i na drugim');
+            $stderr('masinama sada ima istu oznaku verzije a razlicitu semu.');
+            $stderr('Vrati fajl u prvobitno stanje i ispravku dodaj kao novu verziju.');
+
+            exit(2);
         }
 
-        $stderr();
-        $stderr('Primenjena migracija se ne menja — baza na ovoj i na drugim');
-        $stderr('masinama sada ima istu oznaku verzije a razlicitu semu.');
-        $stderr('Vrati fajl u prvobitno stanje i ispravku dodaj kao novu verziju.');
+        $applied = $migrator->applied();
+        $pending = $migrator->pending();
 
-        exit(2);
-    }
+        if ($command === 'migrate:status') {
+            $stdout('Primenjene migracije: ' . count($applied));
 
-    $applied = $migrator->applied();
-    $pending = $migrator->pending();
+            foreach ($applied as $row) {
+                $stdout(sprintf('  [x] %s  %-28s %s UTC', $row['version'], $row['name'], $row['applied_at']));
+            }
 
-    // --- migrate:status -----------------------------------------------
-    if ($command === 'migrate:status') {
-        $stdout('Primenjene migracije: ' . count($applied));
+            $stdout();
+            $stdout('Neprimenjene migracije: ' . count($pending));
 
-        foreach ($applied as $row) {
-            $stdout(sprintf('  [x] %s  %-32s %s UTC', $row['version'], $row['name'], $row['applied_at']));
+            foreach ($pending as $migration) {
+                $stdout(sprintf('  [ ] %s  %s', $migration['version'], $migration['name']));
+            }
+
+            $stdout();
+            exit(0);
         }
 
+        if ($pending === []) {
+            $stdout('Nema novih migracija. Baza je azurna (' . count($applied) . ' primenjeno).');
+            exit(0);
+        }
+
+        $stdout('Primenjujem ' . count($pending) . ' migracija...');
         $stdout();
-        $stdout('Neprimenjene migracije: ' . count($pending));
 
         foreach ($pending as $migration) {
-            $stdout(sprintf('  [ ] %s  %s', $migration['version'], $migration['name']));
+            $label = sprintf('  %s  %s', $migration['version'], $migration['name']);
+
+            try {
+                $durationMs = $migrator->apply($migration);
+                $stdout($label . str_repeat(' ', max(1, 40 - strlen($label))) . "OK ({$durationMs} ms)");
+            } catch (Throwable $e) {
+                $stdout($label . str_repeat(' ', max(1, 40 - strlen($label))) . 'GRESKA');
+                $stderr();
+                $stderr('Migracija ' . $migration['version'] . ' nije uspela:');
+                $stderr('  ' . $e->getMessage());
+                $stderr();
+                $stderr('PAZNJA: MySQL ne povlaci DDL unazad. Ako je ovaj fajl sadrzao');
+                $stderr('vise naredbi, deo je mozda vec primenjen. Proveri stanje seme');
+                $stderr('pre ponovnog pokretanja.');
+
+                exit(1);
+            }
+        }
+
+        $stdout();
+        $stdout('Gotovo. Ukupno primenjeno: ' . (count($applied) + count($pending)) . '.');
+        exit(0);
+    }
+
+    // =====================================================================
+    // Integracije
+    // =====================================================================
+    $secret = new Secret($config['secret_key']);
+    $repo   = new IntegrationRepository($pdo, $secret);
+
+    // --- integrations --------------------------------------------------
+    if ($command === 'integrations') {
+        $integrations = $repo->all();
+
+        if ($integrations === []) {
+            $stdout('Nema unetih integracija. Dodaj prvu sa: bin/syncops integration:add');
+            exit(0);
+        }
+
+        $stdout(sprintf(
+            '%-4s %-22s %-32s %-9s %-12s %s',
+            'ID', 'NAZIV', 'ADRESA', 'STANJE', 'DIJALEKT', 'POSLEDNJA PROVERA'
+        ));
+        $stdout(str_repeat('-', 104));
+
+        foreach ($integrations as $i) {
+            $test = $i->lastTestedAt === null
+                ? 'nije provereno'
+                : ($i->lastTestOk ? 'OK ' : 'GRESKA ') . $i->lastTestedAt;
+
+            $stdout(sprintf(
+                '%-4d %-22s %-32s %-9s %-12s %s',
+                $i->id,
+                mb_strimwidth($i->name, 0, 22, '..'),
+                mb_strimwidth($i->baseUrl(), 0, 32, '..'),
+                $i->isActive ? 'aktivna' : 'iskljucena',
+                $i->effectiveFlavor() ?? 'nepoznat',
+                $test
+            ));
         }
 
         $stdout();
         exit(0);
     }
 
-    // --- migrate --------------------------------------------------------
-    if ($pending === []) {
-        $stdout('Nema novih migracija. Baza je azurna (' . count($applied) . ' primenjeno).');
+    // --- integration:add -------------------------------------------------
+    if ($command === 'integration:add') {
+        $stdout('Nova vCenter integracija.');
+        $stdout();
+
+        $hostname = $ask('FQDN ili IP vCentera');
+
+        if ($hostname === '') {
+            $stderr('Adresa je obavezna.');
+            exit(1);
+        }
+
+        $name     = $ask('Prikazno ime', $hostname);
+        $port     = (int) $ask('Port', '443');
+        $username = $ask('Korisnicko ime (read-only nalog)');
+
+        if ($username === '') {
+            $stderr('Korisnicko ime je obavezno.');
+            exit(1);
+        }
+
+        $password = $askSecret('Lozinka');
+
+        if ($password === '') {
+            $stderr('Lozinka je obavezna.');
+            exit(1);
+        }
+
+        $stdout();
+        $stdout('Dijalekt API-ja: auto (preporuceno), rest_legacy (6.7-7.0), api_v2 (7.0U2+)');
+        $flavor = $ask('Dijalekt', Integration::FLAVOR_AUTO);
+
+        if (!in_array($flavor, [Integration::FLAVOR_AUTO, Integration::FLAVOR_REST_LEGACY, Integration::FLAVOR_API_V2], true)) {
+            $stderr("Nepoznat dijalekt: {$flavor}");
+            exit(1);
+        }
+
+        $verifyPeer = $askYesNo('Proveravati TLS sertifikat?', false);
+
+        $id = $repo->create(
+            name:       $name,
+            hostname:   $hostname,
+            username:   $username,
+            password:   $password,
+            port:       $port,
+            apiFlavor:  $flavor,
+            verifyPeer: $verifyPeer,
+        );
+
+        $stdout();
+        $stdout("Integracija je dodata pod ID {$id}.");
+        $stdout('Lozinka je sacuvana enkriptovano i vise se nigde ne ispisuje.');
         exit(0);
     }
 
-    $stdout('Primenjujem ' . count($pending) . ' migracija...');
-    $stdout();
-
-    foreach ($pending as $migration) {
-        $label = sprintf('  %s  %s', $migration['version'], $migration['name']);
-
-        try {
-            $durationMs = $migrator->apply($migration);
-            $stdout($label . str_repeat(' ', max(1, 44 - strlen($label))) . "OK ({$durationMs} ms)");
-        } catch (Throwable $e) {
-            $stdout($label . str_repeat(' ', max(1, 44 - strlen($label))) . 'GRESKA');
-            $stderr();
-            $stderr('Migracija ' . $migration['version'] . ' nije uspela:');
-            $stderr('  ' . $e->getMessage());
-            $stderr();
-            $stderr('PAZNJA: MySQL ne povlaci DDL unazad. Ako je ovaj fajl sadrzao');
-            $stderr('vise naredbi, deo je mozda vec primenjen. Proveri stanje seme');
-            $stderr('pre ponovnog pokretanja.');
-
-            exit(1);
-        }
+    // --- komande koje zahtevaju <id> --------------------------------------
+    if ($argument === null || !ctype_digit($argument)) {
+        $stderr("Komanda {$command} zahteva ID integracije.");
+        $stderr("Primer: bin/syncops {$command} 1");
+        exit(1);
     }
 
-    $stdout();
-    $stdout('Gotovo. Ukupno primenjeno: ' . (count($applied) + count($pending)) . '.');
+    $id          = (int) $argument;
+    $integration = $repo->find($id);
+
+    if ($integration === null) {
+        $stderr("Integracija {$id} ne postoji.");
+        exit(1);
+    }
+
+    if ($command === 'integration:password') {
+        $password = $askSecret("Nova lozinka za {$integration->name}");
+
+        if ($password === '') {
+            $stderr('Lozinka ne sme biti prazna.');
+            exit(1);
+        }
+
+        $repo->updatePassword($id, $password);
+        $stdout('Lozinka je promenjena.');
+        exit(0);
+    }
+
+    if ($command === 'integration:enable' || $command === 'integration:disable') {
+        $active = $command === 'integration:enable';
+
+        $repo->setActive($id, $active);
+        $stdout(sprintf(
+            'Integracija %s je %s.',
+            $integration->name,
+            $active ? 'aktivirana' : 'iskljucena'
+        ));
+        exit(0);
+    }
 
     exit(0);
 } catch (Throwable $e) {
