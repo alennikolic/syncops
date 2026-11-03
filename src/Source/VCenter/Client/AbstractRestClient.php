@@ -205,6 +205,11 @@ abstract class AbstractRestClient implements ClientInterface
         return $this->getList('/vm', $filters, 'virtuelne masine', self::LIMIT_VMS);
     }
 
+    public function listVmsOnHost(string $hostId): array
+    {
+        return $this->getList('/vm', ['hosts' => [$hostId]], 'virtuelne masine na hostu', self::LIMIT_VMS);
+    }
+
     public function getVm(string $vmId): array
     {
         $response = $this->http->request(
