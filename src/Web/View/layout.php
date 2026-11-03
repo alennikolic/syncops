@@ -29,7 +29,15 @@ $nav = $nav ?? '';
         <div class="brand">Sync<span>OPS</span></div>
 
         <div class="nav">
-            <a href="/"             <?= $nav === 'dashboard'    ? 'aria-current="page"' : '' ?>>Pregled</a>
+            <a href="/"         <?= $nav === 'dashboard' ? 'aria-current="page"' : '' ?>>Pregled</a>
+
+            <div class="nav-group">Inventar</div>
+            <a href="/vms"      <?= $nav === 'vms'      ? 'aria-current="page"' : '' ?>>Virtuelne mašine</a>
+            <a href="/hosts"    <?= $nav === 'hosts'    ? 'aria-current="page"' : '' ?>>Hostovi</a>
+            <a href="/clusters" <?= $nav === 'clusters' ? 'aria-current="page"' : '' ?>>Klasteri</a>
+
+            <div class="nav-group">Podešavanje</div>
+            <a href="/runs"         <?= $nav === 'runs'         ? 'aria-current="page"' : '' ?>>Prikupljanja</a>
             <a href="/integrations" <?= $nav === 'integrations' ? 'aria-current="page"' : '' ?>>Integracije</a>
         </div>
 
