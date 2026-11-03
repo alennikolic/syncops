@@ -128,6 +128,7 @@ try {
         $router->get('/', $dashboard->index(...));
 
         $router->get('/vms', $inventory->vms(...));
+        $router->get('/vms/export', $inventory->exportVms(...));
         $router->get('/vms/{id}', $inventory->vm(...));
         $router->get('/hosts', $inventory->hosts(...));
         $router->get('/clusters', $inventory->clusters(...));
