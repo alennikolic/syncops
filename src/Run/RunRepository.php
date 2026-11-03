@@ -161,6 +161,77 @@ final class RunRepository
     }
 
     /**
+     * Uzmi sledeci posao iz reda cekanja i oznaci ga kao pokrenut.
+     *
+     * Preuzimanje je atomsko: UPDATE ima uslov status = 'queued', pa ako je
+     * drugi worker bio brzi, rowCount je 0 i ovaj pokusava sledeci. Bez tog
+     * uslova bi dva workera mogla da preuzmu isti posao.
+     *
+     * @return array<string, mixed>|null Red posla, ili null ako je red prazan
+     */
+    public function claimNext(): ?array
+    {
+        $candidates = $this->pdo->prepare(
+            'SELECT id FROM discovery_run
+              WHERE status = :queued
+              ORDER BY queued_at, id
+              LIMIT 10'
+        );
+        $candidates->execute(['queued' => RunStatus::QUEUED]);
+
+        foreach ($candidates->fetchAll() as $candidate) {
+            $claim = $this->pdo->prepare(
+                'UPDATE discovery_run
+                    SET status = :running,
+                        started_at = COALESCE(started_at, UTC_TIMESTAMP()),
+                        heartbeat_at = UTC_TIMESTAMP()
+                  WHERE id = :id AND status = :queued'
+            );
+
+            $claim->execute([
+                'running' => RunStatus::RUNNING,
+                'queued'  => RunStatus::QUEUED,
+                'id'      => $candidate['id'],
+            ]);
+
+            if ($claim->rowCount() === 1) {
+                return $this->find((int) $candidate['id']);
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Oznaci kao neuspele poslove koji su zaglavili bez znaka zivota.
+     *
+     * Bez ovoga bi worker koji je ubijen nasred posla trajno zakljucao svoju
+     * integraciju: active_lock drzi bravu dok je status queued ili running.
+     *
+     * @return list<int> ID-jevi oslobodjenih poslova
+     */
+    public function failStale(int $olderThanMinutes = 30): array
+    {
+        $freed = [];
+
+        foreach ($this->stale($olderThanMinutes) as $row) {
+            $this->finish(
+                (int) $row['id'],
+                RunStatus::FAILED,
+                sprintf(
+                    'Posao je prekinut bez zavrsetka — poslednji znak zivota %s UTC. '
+                    . 'Verovatno je worker ugasen nasred posla.',
+                    (string) ($row['heartbeat_at'] ?? $row['queued_at'])
+                )
+            );
+
+            $freed[] = (int) $row['id'];
+        }
+
+        return $freed;
+    }
+
+    /**
      * Run koji je ostao u stanju running a worker mu je odavno umro.
      * Koristi ga sledeci run da oslobodi zakljucanu integraciju.
      *
@@ -168,16 +239,23 @@ final class RunRepository
      */
     public function stale(int $olderThanMinutes = 30): array
     {
+        // Prag se racuna u PHP-u umesto preko DATE_SUB/INTERVAL: upit tako
+        // ostaje obican i proverljiv, a obe strane ionako rade u UTC-u
+        // (kontejner ima TZ=UTC, baza default-time-zone=+00:00), pa razlika
+        // izmedju dva sata ne moze da se priblizi pragu od 30 minuta.
+        $cutoff = gmdate('Y-m-d H:i:s', time() - max(1, $olderThanMinutes) * 60);
+
         $stmt = $this->pdo->prepare(
             'SELECT * FROM discovery_run
               WHERE status IN (:queued, :running)
-                AND COALESCE(heartbeat_at, queued_at) < DATE_SUB(UTC_TIMESTAMP(), INTERVAL :minutes MINUTE)'
+                AND COALESCE(heartbeat_at, queued_at) < :cutoff'
         );
 
-        $stmt->bindValue('queued', RunStatus::QUEUED);
-        $stmt->bindValue('running', RunStatus::RUNNING);
-        $stmt->bindValue('minutes', $olderThanMinutes, PDO::PARAM_INT);
-        $stmt->execute();
+        $stmt->execute([
+            'queued'  => RunStatus::QUEUED,
+            'running' => RunStatus::RUNNING,
+            'cutoff'  => $cutoff,
+        ]);
 
         return $stmt->fetchAll();
     }
