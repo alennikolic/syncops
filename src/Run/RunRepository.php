@@ -57,12 +57,20 @@ final class RunRepository
         }
     }
 
+    /**
+     * Oznaci run kao pokrenut.
+     *
+     * started_at se postavlja SAMO ako jos nije postavljen: ova metoda se zove
+     * i drugi put, da upise prepoznati dijalekt, pa bi bez COALESCE pomerila
+     * pocetak run-a na trenutak kada je prikupljanje vec bilo gotovo — i
+     * trajanje run-a bi u bazi bilo besmisleno.
+     */
     public function markRunning(int $runId, ?string $flavor = null): void
     {
         $stmt = $this->pdo->prepare(
             'UPDATE discovery_run
                 SET status = :status,
-                    started_at = UTC_TIMESTAMP(),
+                    started_at = COALESCE(started_at, UTC_TIMESTAMP()),
                     heartbeat_at = UTC_TIMESTAMP(),
                     api_flavor = COALESCE(:flavor, api_flavor)
               WHERE id = :id'
