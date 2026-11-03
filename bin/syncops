@@ -593,8 +593,32 @@ try {
             ));
         }
 
-        $withHw = count(array_filter($result->hosts, static fn ($h) => $h->hardwareSource !== null));
-        $stdout(sprintf('  hardverski podaci: %d / %d (REST ih nema)', $withHw, count($result->hosts)));
+        $withHw = $result->hostsWithHardware();
+        $stdout(sprintf(
+            '  hardverski podaci: %d / %d%s',
+            $withHw,
+            count($result->hosts),
+            $withHw === 0 ? ' — SOAP nije dao nista, vidi napomene' : ' (SOAP)'
+        ));
+
+        foreach ($result->hosts as $h) {
+            if ($h->hardwareSource === null) {
+                continue;
+            }
+
+            $stdout(sprintf(
+                '    %-22s %s %s, SN %s, %s x %s jezgara, %s GiB, ESXi %s build %s',
+                $h->name,
+                $h->vendor ?? '?',
+                $h->model ?? '?',
+                $h->serialNumber ?? '—',
+                $h->cpuSockets ?? '?',
+                $h->cpuCores ?? '?',
+                $h->memoryBytes === null ? '?' : round($h->memoryBytes / 1024 ** 3),
+                $h->esxiVersion ?? '?',
+                $h->esxiBuild ?? '?'
+            ));
+        }
 
         // --- Masine -------------------------------------------------------
         $stdout();
@@ -637,6 +661,15 @@ try {
         }
 
         unset($totalVms);
+
+        if ($result->warnings !== []) {
+            $stdout();
+            $stdout('NAPOMENE (' . count($result->warnings) . ') — ne obaraju run');
+
+            foreach ($result->warnings as $warning) {
+                $stdout('  - ' . $warning);
+            }
+        }
 
         if ($result->failures !== []) {
             $stdout();
@@ -736,6 +769,21 @@ try {
                 $s['changed'],
                 $s['unchanged']
             ));
+        }
+
+        $stdout(sprintf(
+            '  %-10s %8d hostova sa hardverskim podacima',
+            'hardver',
+            $outcome->collection->hostsWithHardware()
+        ));
+
+        if ($outcome->collection->warnings !== []) {
+            $stdout();
+            $stdout('NAPOMENE (' . count($outcome->collection->warnings) . '):');
+
+            foreach ($outcome->collection->warnings as $warning) {
+                $stdout('  - ' . $warning);
+            }
         }
 
         if ($outcome->collection->failures !== []) {
