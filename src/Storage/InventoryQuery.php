@@ -27,7 +27,7 @@ final class InventoryQuery
     // -----------------------------------------------------------------
 
     /**
-     * @param array{search?: string, power?: string, cluster?: string, guest?: string, integration?: int} $filters
+     * @param array{search?: string, power?: string, cluster?: string, host?: string, guest?: string, integration?: int} $filters
      * @return array{rows: list<array<string, mixed>>, total: int, page: int, pages: int}
      */
     public function vms(array $filters = [], int $page = 1): array
@@ -189,7 +189,7 @@ final class InventoryQuery
     /**
      * Vrednosti za padajuce filtere na stranici masina.
      *
-     * @return array{clusters: list<array<string, mixed>>, powers: list<string>, guests: list<string>}
+     * @return array{clusters: list<array<string, mixed>>, hosts: list<array<string, mixed>>, powers: list<string>, guests: list<string>}
      */
     public function vmFilterOptions(): array
     {
@@ -199,6 +199,12 @@ final class InventoryQuery
                    FROM vc_vm v
                    JOIN vc_cluster c ON c.integration_id = v.integration_id AND c.moref = v.cluster_moref
                   ORDER BY c.name'
+            )->fetchAll(),
+            'hosts' => $this->pdo->query(
+                'SELECT DISTINCT h.moref, h.name
+                   FROM vc_vm v
+                   JOIN vc_host h ON h.integration_id = v.integration_id AND h.moref = v.host_moref
+                  ORDER BY h.name'
             )->fetchAll(),
             'powers' => array_column(
                 $this->pdo->query('SELECT DISTINCT power_state FROM vc_vm WHERE power_state IS NOT NULL ORDER BY power_state')->fetchAll(),
@@ -243,6 +249,11 @@ final class InventoryQuery
         if (($filters['cluster'] ?? '') !== '') {
             $where .= ' AND v.cluster_moref = :cluster';
             $params['cluster'] = $filters['cluster'];
+        }
+
+        if (($filters['host'] ?? '') !== '') {
+            $where .= ' AND v.host_moref = :host';
+            $params['host'] = $filters['host'];
         }
 
         if (($filters['integration'] ?? 0) > 0) {
