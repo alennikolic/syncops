@@ -13,6 +13,7 @@ namespace SyncOps\Source\VCenter;
 use SensitiveParameter;
 use SyncOps\Integration\Integration;
 use SyncOps\Source\VCenter\Client\ClientFactory;
+use SyncOps\Source\VCenter\Client\HardwareAwareClient;
 use SyncOps\Source\VCenter\Collector\ClusterCollector;
 use SyncOps\Source\VCenter\Collector\HostCollector;
 use SyncOps\Source\VCenter\Collector\VmCollector;
@@ -75,6 +76,7 @@ final class VCenterSource
                 hosts: $hosts,
                 vms: $vms,
                 failures: $this->vms->failures(),
+                warnings: $client instanceof HardwareAwareClient ? $client->warnings() : [],
                 apiCalls: $client->callCount(),
                 durationSeconds: microtime(true) - $started,
             );
