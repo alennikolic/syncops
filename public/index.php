@@ -43,7 +43,14 @@ use SyncOps\Web\Controller\DashboardController;
 use SyncOps\Web\Controller\IntegrationController;
 use SyncOps\Web\Controller\InventoryController;
 use SyncOps\Web\Controller\RunController;
+use SyncOps\Run\DiscoveryRunner;
+use SyncOps\Run\RunRepository;
+use SyncOps\Source\VCenter\VCenterSource;
 use SyncOps\Storage\InventoryQuery;
+use SyncOps\Storage\RawStore;
+use SyncOps\Storage\Repository\ClusterRepository;
+use SyncOps\Storage\Repository\HostRepository;
+use SyncOps\Storage\Repository\VmRepository;
 use SyncOps\Web\Flash;
 use SyncOps\Web\Router;
 use SyncOps\Web\View;
@@ -96,8 +103,20 @@ try {
 
         $tester = new ConnectionTester($repo, new ClientFactory());
 
+        // GUI samo upisuje posao u red; izvrsava ga worker.
+        $runner = new DiscoveryRunner(
+            $pdo,
+            $repo,
+            new RunRepository($pdo),
+            new VCenterSource(new ClientFactory(timeout: 60)),
+            new RawStore($pdo),
+            new ClusterRepository($pdo),
+            new HostRepository($pdo),
+            new VmRepository($pdo),
+        );
+
         $dashboard   = new DashboardController($pdo, $repo, $view);
-        $integration = new IntegrationController($repo, $view, $auth, $flash, $tester);
+        $integration = new IntegrationController($repo, $view, $auth, $flash, $tester, $runner);
         $inventory   = new InventoryController(new InventoryQuery($pdo), $view);
         $runs        = new RunController($pdo, $view);
 
@@ -115,6 +134,7 @@ try {
         $router->get('/integrations/{id}/edit', $integration->editForm(...));
         $router->post('/integrations/{id}', $integration->update(...));
         $router->post('/integrations/{id}/test', $integration->test(...));
+        $router->post('/integrations/{id}/discover', $integration->discover(...));
         $router->post('/integrations/{id}/state', $integration->toggle(...));
     }
 
