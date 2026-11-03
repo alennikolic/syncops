@@ -100,10 +100,22 @@ final class DiscoveryRunner
 
             $status = $result->isComplete() ? RunStatus::SUCCESS : RunStatus::PARTIAL;
 
+            // Upozorenja se belezе i kada je run uspesan: hardverski podaci
+            // koji su izostali treba da se vide u GUI-ju, ali ne smeju da
+            // obore status — "partial" bi trajno ugasio oznaku
+            // "nije vidjeno u poslednjem prikupljanju".
+            $notes = array_merge(
+                array_slice($result->failures, 0, 50),
+                array_map(
+                    static fn (string $w): string => 'Napomena: ' . $w,
+                    $result->warnings
+                )
+            );
+
             $this->runs->finish(
                 $runId,
                 $status,
-                $result->failures === [] ? null : implode("\n", array_slice($result->failures, 0, 50)),
+                $notes === [] ? null : implode("\n", $notes),
                 $result->apiCalls
             );
 
