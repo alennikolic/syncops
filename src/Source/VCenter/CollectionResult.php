@@ -18,6 +18,8 @@ final class CollectionResult
      * @param list<HostDto> $hosts
      * @param list<VmDto> $vms
      * @param list<string> $failures Pojedinacni objekti koji su pukli
+     * @param list<string> $warnings Sto je izostalo a ne obara run — npr.
+     *        hardverski podaci kada je SOAP nedostupan
      */
     public function __construct(
         public readonly string $flavor,
@@ -26,6 +28,7 @@ final class CollectionResult
         public readonly array $hosts,
         public readonly array $vms,
         public readonly array $failures,
+        public readonly array $warnings,
         public readonly int $apiCalls,
         public readonly float $durationSeconds,
     ) {
@@ -39,5 +42,14 @@ final class CollectionResult
     public function isComplete(): bool
     {
         return $this->failures === [];
+    }
+
+    /** Koliko hostova ima popunjene hardverske podatke. */
+    public function hostsWithHardware(): int
+    {
+        return count(array_filter(
+            $this->hosts,
+            static fn ($host): bool => $host->hardwareSource !== null
+        ));
     }
 }
