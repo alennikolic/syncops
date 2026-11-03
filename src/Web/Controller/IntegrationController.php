@@ -10,6 +10,8 @@ namespace SyncOps\Web\Controller;
 
 use SyncOps\Integration\Integration;
 use SyncOps\Integration\IntegrationRepository;
+use SyncOps\Run\DiscoveryRunner;
+use SyncOps\Run\RunStatus;
 use SyncOps\Source\VCenter\ConnectionTester;
 use SyncOps\Web\Auth;
 use SyncOps\Web\Flash;
@@ -30,6 +32,7 @@ final class IntegrationController
         private readonly Auth $auth,
         private readonly Flash $flash,
         private readonly ConnectionTester $tester,
+        private readonly DiscoveryRunner $runner,
     ) {
     }
 
@@ -196,6 +199,52 @@ final class IntegrationController
         }
 
         header('Location: /integrations');
+    }
+
+    /**
+     * Stavi prikupljanje u red cekanja.
+     *
+     * Ne izvrsava se ovde: na vecem vCenteru prikupljanje traje minutima i
+     * probilo bi ogranicenje trajanja web zahteva. Posao preuzima worker.
+     */
+    public function discover(string $id): void
+    {
+        $integration = $this->repo->find((int) $id);
+
+        if ($integration === null) {
+            $this->notFound();
+
+            return;
+        }
+
+        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
+            $this->flash->error('Sesija je istekla. Pokusaj ponovo.');
+            header('Location: /integrations');
+
+            return;
+        }
+
+        if (!$integration->isActive) {
+            $this->flash->error("Integracija „{$integration->name}” je isključena. Uključi je pa pokušaj ponovo.");
+            header('Location: /integrations');
+
+            return;
+        }
+
+        try {
+            $runId = $this->runner->enqueue($integration, RunStatus::TRIGGER_GUI);
+
+            $this->flash->success(sprintf(
+                'Prikupljanje za „%s” je u redu čekanja kao posao #%d. Preuzeće ga worker.',
+                $integration->name,
+                $runId
+            ));
+
+            header('Location: /runs');
+        } catch (Throwable $e) {
+            $this->flash->error($e->getMessage());
+            header('Location: /integrations');
+        }
     }
 
     public function toggle(string $id): void
