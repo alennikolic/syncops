@@ -72,6 +72,14 @@ interface ClientInterface
     public function listVms(array $clusterIds = [], array $datacenterIds = []): array;
 
     /**
+     * Masine na jednom hostu. Sluzi da se smestaj (VM -> host) sazna jednim
+     * pozivom po hostu, umesto jednim po masini.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function listVmsOnHost(string $hostId): array;
+
+    /**
      * Detalji jedne masine, ukljucujuci blok identity sa instance_uuid i
      * bios_uuid. Dostupno samo odavde, ne iz liste.
      *
