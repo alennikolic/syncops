@@ -53,6 +53,39 @@ final class InventoryQuery
     }
 
     /**
+     * Masine za izvoz: isti filteri, bez stranicenja.
+     *
+     * Vraca generator a ne niz, da se izvoz od deset hiljada redova ne sklapa
+     * ceo u memoriji pre nego sto krene ka pregledacu.
+     *
+     * @param array{search?: string, power?: string, cluster?: string, host?: string, guest?: string, integration?: int} $filters
+     * @return iterable<array<string, mixed>>
+     */
+    public function vmsForExport(array $filters = []): iterable
+    {
+        [$where, $params] = $this->vmFilters($filters);
+
+        $stmt = $this->pdo->prepare(
+            'SELECT v.*,
+                    h.name AS host_name,
+                    c.name AS cluster_name,
+                    i.name AS integration_name
+               FROM vc_vm v
+               LEFT JOIN vc_host    h ON h.integration_id = v.integration_id AND h.moref = v.host_moref
+               LEFT JOIN vc_cluster c ON c.integration_id = v.integration_id AND c.moref = v.cluster_moref
+               JOIN integration     i ON i.id = v.integration_id
+              WHERE ' . $where . '
+              ORDER BY i.name, v.name'
+        );
+
+        $stmt->execute($params);
+
+        while (($row = $stmt->fetch()) !== false) {
+            yield $row;
+        }
+    }
+
+    /**
      * @return array<string, mixed>|null
      */
     public function vm(int $id): ?array
