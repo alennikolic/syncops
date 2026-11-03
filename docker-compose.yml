@@ -87,31 +87,35 @@ services:
 
   # ---------------------------------------------------------------
   # CLI worker — isti image kao "app", drugi entrypoint.
-  # Zakomentarisan dok bin/syncops ne postoji; tada samo odkomentarisati.
+  #
+  # Uzima poslove iz reda cekanja (discovery_run sa statusom queued) koje
+  # upisuje GUI ili "discover:queue". Na stop/restart zavrsava tekuci posao
+  # pa izlazi, zato je stop_grace_period duzi od podrazumevanih 10 s.
   # ---------------------------------------------------------------
-  # worker:
-  #   build:
-  #     context: .
-  #     dockerfile: docker/php/Dockerfile
-  #   container_name: syncops-worker
-  #   restart: unless-stopped
-  #   command: ["php", "/app/bin/syncops", "worker"]
-  #   volumes:
-  #     - .:/app
-  #   environment:
-  #     TZ: UTC
-  #     APP_ENV: ${APP_ENV:-dev}
-  #     DB_HOST: db
-  #     DB_PORT: 3306
-  #     DB_NAME: ${DB_NAME}
-  #     DB_USER: ${DB_USER}
-  #     DB_PASSWORD: ${DB_PASSWORD}
-  #     SECRET_KEY: ${SECRET_KEY}
-  #   depends_on:
-  #     db:
-  #       condition: service_healthy
-  #   networks:
-  #     - syncops
+  worker:
+    build:
+      context: .
+      dockerfile: docker/php/Dockerfile
+    container_name: syncops-worker
+    restart: unless-stopped
+    command: ["php", "/app/bin/syncops", "worker"]
+    stop_grace_period: 5m
+    volumes:
+      - .:/app
+    environment:
+      TZ: UTC
+      APP_ENV: ${APP_ENV:-dev}
+      DB_HOST: db
+      DB_PORT: 3306
+      DB_NAME: ${DB_NAME}
+      DB_USER: ${DB_USER}
+      DB_PASSWORD: ${DB_PASSWORD}
+      SECRET_KEY: ${SECRET_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+    networks:
+      - syncops
 
 volumes:
   db_data:
