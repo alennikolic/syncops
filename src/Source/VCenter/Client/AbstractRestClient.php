@@ -230,7 +230,10 @@ abstract class AbstractRestClient implements ClientInterface
         $response = $this->http->request(
             'GET',
             $this->vcenterPath() . '/vm/' . rawurlencode($vmId) . '/guest/identity',
-            headers: $this->authHeaders()
+            headers: $this->authHeaders(),
+            // Bez ovoga bi se svaka masina bez Tools-a pozivala tri puta,
+            // uz pauze od 1 i 2 sekunde.
+            finalStatuses: [404, 503],
         );
 
         // 503 = VMware Tools ne rade; 404 = masina ugasena ili bez gosta.
