@@ -134,18 +134,7 @@ final class InventoryQuery
      */
     public function hosts(array $filters = [], int $page = 1): array
     {
-        $where  = '1 = 1';
-        $params = [];
-
-        if (($filters['search'] ?? '') !== '') {
-            $where .= ' AND (h.name LIKE :search OR h.serial_number LIKE :search OR h.model LIKE :search)';
-            $params['search'] = '%' . $filters['search'] . '%';
-        }
-
-        if (($filters['integration'] ?? 0) > 0) {
-            $where .= ' AND h.integration_id = :integration';
-            $params['integration'] = (int) $filters['integration'];
-        }
+        [$where, $params] = $this->hostFilters($filters);
 
         $total = $this->count('vc_host h', $where, $params);
         $page  = $this->clampPage($page, $total);
@@ -163,6 +152,151 @@ final class InventoryQuery
                  LIMIT ' . self::PER_PAGE . ' OFFSET ' . (($page - 1) * self::PER_PAGE);
 
         return $this->paged($sql, $params, $total, $page);
+    }
+
+    /**
+     * @param array<string, mixed> $filters
+     * @return array{0: string, 1: array<string, mixed>}
+     */
+    private function hostFilters(array $filters): array
+    {
+        $where  = '1 = 1';
+        $params = [];
+
+        if (($filters['search'] ?? '') !== '') {
+            $where .= ' AND (h.name LIKE :search
+                          OR h.serial_number LIKE :search
+                          OR h.model LIKE :search
+                          OR h.vendor LIKE :search
+                          OR h.hardware_uuid LIKE :search
+                          OR h.moref LIKE :search)';
+            $params['search'] = '%' . $filters['search'] . '%';
+        }
+
+        if (($filters['state'] ?? '') !== '') {
+            $where .= ' AND h.connection_state = :state';
+            $params['state'] = $filters['state'];
+        }
+
+        if (($filters['cluster'] ?? '') !== '') {
+            $where .= ' AND h.cluster_moref = :cluster';
+            $params['cluster'] = $filters['cluster'];
+        }
+
+        if (($filters['integration'] ?? 0) > 0) {
+            $where .= ' AND h.integration_id = :integration';
+            $params['integration'] = (int) $filters['integration'];
+        }
+
+        return [$where, $params];
+    }
+
+    /**
+     * @return array<string, mixed>|null
+     */
+    public function host(int $id): ?array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT h.*,
+                    c.name AS cluster_name,
+                    i.name AS integration_name,
+                    (SELECT COUNT(*) FROM vc_vm v
+                      WHERE v.integration_id = h.integration_id AND v.host_moref = h.moref) AS vm_count
+               FROM vc_host h
+               LEFT JOIN vc_cluster c ON c.integration_id = h.integration_id AND c.moref = h.cluster_moref
+               JOIN integration     i ON i.id = h.integration_id
+              WHERE h.id = :id'
+        );
+        $stmt->execute(['id' => $id]);
+
+        $row = $stmt->fetch();
+
+        return $row === false ? null : $row;
+    }
+
+    /**
+     * Masine koje sede na jednom hostu — ono sto se gleda pred odrzavanje.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function vmsOnHost(int $integrationId, string $hostMoref): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, name, power_state, cpu_count, memory_mib, guest_ip_address
+               FROM vc_vm
+              WHERE integration_id = :integration AND host_moref = :moref
+              ORDER BY name'
+        );
+        $stmt->execute(['integration' => $integrationId, 'moref' => $hostMoref]);
+
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * @return list<array<string, mixed>>
+     */
+    public function hostChanges(int $hostId, int $limit = 50): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM vc_host_change WHERE host_id = :id ORDER BY changed_at DESC, id DESC LIMIT ' . $limit
+        );
+        $stmt->execute(['id' => $hostId]);
+
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Hostovi za izvoz: isti filteri, bez stranicenja.
+     *
+     * @param array<string, mixed> $filters
+     * @return iterable<array<string, mixed>>
+     */
+    public function hostsForExport(array $filters = []): iterable
+    {
+        [$where, $params] = $this->hostFilters($filters);
+
+        $stmt = $this->pdo->prepare(
+            'SELECT h.*,
+                    c.name AS cluster_name,
+                    i.name AS integration_name,
+                    (SELECT COUNT(*) FROM vc_vm v
+                      WHERE v.integration_id = h.integration_id AND v.host_moref = h.moref) AS vm_count
+               FROM vc_host h
+               LEFT JOIN vc_cluster c ON c.integration_id = h.integration_id AND c.moref = h.cluster_moref
+               JOIN integration     i ON i.id = h.integration_id
+              WHERE ' . $where . '
+              ORDER BY i.name, h.name'
+        );
+
+        $stmt->execute($params);
+
+        while (($row = $stmt->fetch()) !== false) {
+            yield $row;
+        }
+    }
+
+    /**
+     * Vrednosti za padajuce filtere na stranici hostova.
+     *
+     * @return array{clusters: list<array<string, mixed>>, states: list<string>}
+     */
+    public function hostFilterOptions(): array
+    {
+        return [
+            'clusters' => $this->pdo->query(
+                'SELECT DISTINCT c.moref, c.name
+                   FROM vc_host h
+                   JOIN vc_cluster c ON c.integration_id = h.integration_id AND c.moref = h.cluster_moref
+                  ORDER BY c.name'
+            )->fetchAll(),
+            'states' => array_column(
+                $this->pdo->query(
+                    'SELECT DISTINCT connection_state FROM vc_host
+                      WHERE connection_state IS NOT NULL ORDER BY connection_state'
+                )->fetchAll(),
+                'connection_state'
+            ),
+        ];
     }
 
     // -----------------------------------------------------------------
