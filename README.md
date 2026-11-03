@@ -267,4 +267,4 @@ Ova ograničenja su ugrađena u dizajn i nisu bug:
 
 ## Autor
 
-Alen Nikolić — MDS Informatički inženjering
+Alen Nikolić
