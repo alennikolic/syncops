@@ -1,0 +1,179 @@
+#!/usr/bin/env php
+<?php
+// bin/syncops
+//
+// Jedini CLI entrypoint aplikacije.
+//
+// Upotreba:
+//   bin/syncops migrate           primeni sve neprimenjene migracije
+//   bin/syncops migrate:status    prikazi stanje migracija, bez izmena
+//   bin/syncops help              spisak komandi
+//
+// U Docker okruzenju:
+//   docker compose exec app bin/syncops migrate
+
+declare(strict_types=1);
+
+if (PHP_SAPI !== 'cli') {
+    http_response_code(404);
+    exit(1);
+}
+
+$root = dirname(__DIR__);
+
+// -----------------------------------------------------------------------
+// Autoload
+//
+// Koristi Composer ako je "composer install" odradjen; u suprotnom
+// registruje minimalni PSR-4 autoloader, da CLI radi i bez vendor/ foldera.
+// -----------------------------------------------------------------------
+$composerAutoload = $root . '/vendor/autoload.php';
+
+if (is_file($composerAutoload)) {
+    require $composerAutoload;
+} else {
+    spl_autoload_register(static function (string $class) use ($root): void {
+        $prefix = 'SyncOps\\';
+
+        if (!str_starts_with($class, $prefix)) {
+            return;
+        }
+
+        $relative = str_replace('\\', '/', substr($class, strlen($prefix)));
+        $file     = $root . '/src/' . $relative . '.php';
+
+        if (is_file($file)) {
+            require $file;
+        }
+    });
+}
+
+use SyncOps\Core\Db;
+use SyncOps\Core\Migrator;
+
+// -----------------------------------------------------------------------
+// Ispis
+// -----------------------------------------------------------------------
+$stdout = static fn (string $line = '') => fwrite(STDOUT, $line . PHP_EOL);
+$stderr = static fn (string $line = '') => fwrite(STDERR, $line . PHP_EOL);
+
+$usage = static function () use ($stdout): void {
+    $stdout('SyncOPS CLI');
+    $stdout();
+    $stdout('Komande:');
+    $stdout('  migrate           Primeni sve neprimenjene migracije');
+    $stdout('  migrate:status    Prikazi stanje migracija (bez izmena)');
+    $stdout('  help              Ovaj ispis');
+    $stdout();
+};
+
+// -----------------------------------------------------------------------
+// Dispatch
+// -----------------------------------------------------------------------
+$command = $argv[1] ?? 'help';
+
+if (in_array($command, ['help', '-h', '--help'], true)) {
+    $usage();
+    exit(0);
+}
+
+if (!in_array($command, ['migrate', 'migrate:status'], true)) {
+    $stderr("Nepoznata komanda: {$command}");
+    $stderr();
+    $usage();
+    exit(1);
+}
+
+try {
+    /** @var array{db: array<string, mixed>, paths: array<string, string>, env: string} $config */
+    $config = require $root . '/config/config.php';
+
+    $pdo      = Db::connect($config['db']);
+    $migrator = new Migrator($pdo, $config['paths']['migrations']);
+
+    $migrator->ensureTable();
+
+    // --- Provera da niko nije menjao vec primenjenu migraciju ----------
+    $drift = $migrator->drift();
+
+    if ($drift !== []) {
+        $stderr('GRESKA: izmenjene su migracije koje su vec primenjene.');
+        $stderr();
+
+        foreach ($drift as $item) {
+            $stderr("  {$item['version']}  {$item['name']}");
+        }
+
+        $stderr();
+        $stderr('Primenjena migracija se ne menja — baza na ovoj i na drugim');
+        $stderr('masinama sada ima istu oznaku verzije a razlicitu semu.');
+        $stderr('Vrati fajl u prvobitno stanje i ispravku dodaj kao novu verziju.');
+
+        exit(2);
+    }
+
+    $applied = $migrator->applied();
+    $pending = $migrator->pending();
+
+    // --- migrate:status -----------------------------------------------
+    if ($command === 'migrate:status') {
+        $stdout('Primenjene migracije: ' . count($applied));
+
+        foreach ($applied as $row) {
+            $stdout(sprintf('  [x] %s  %-32s %s UTC', $row['version'], $row['name'], $row['applied_at']));
+        }
+
+        $stdout();
+        $stdout('Neprimenjene migracije: ' . count($pending));
+
+        foreach ($pending as $migration) {
+            $stdout(sprintf('  [ ] %s  %s', $migration['version'], $migration['name']));
+        }
+
+        $stdout();
+        exit(0);
+    }
+
+    // --- migrate --------------------------------------------------------
+    if ($pending === []) {
+        $stdout('Nema novih migracija. Baza je azurna (' . count($applied) . ' primenjeno).');
+        exit(0);
+    }
+
+    $stdout('Primenjujem ' . count($pending) . ' migracija...');
+    $stdout();
+
+    foreach ($pending as $migration) {
+        $label = sprintf('  %s  %s', $migration['version'], $migration['name']);
+
+        try {
+            $durationMs = $migrator->apply($migration);
+            $stdout($label . str_repeat(' ', max(1, 44 - strlen($label))) . "OK ({$durationMs} ms)");
+        } catch (Throwable $e) {
+            $stdout($label . str_repeat(' ', max(1, 44 - strlen($label))) . 'GRESKA');
+            $stderr();
+            $stderr('Migracija ' . $migration['version'] . ' nije uspela:');
+            $stderr('  ' . $e->getMessage());
+            $stderr();
+            $stderr('PAZNJA: MySQL ne povlaci DDL unazad. Ako je ovaj fajl sadrzao');
+            $stderr('vise naredbi, deo je mozda vec primenjen. Proveri stanje seme');
+            $stderr('pre ponovnog pokretanja.');
+
+            exit(1);
+        }
+    }
+
+    $stdout();
+    $stdout('Gotovo. Ukupno primenjeno: ' . (count($applied) + count($pending)) . '.');
+
+    exit(0);
+} catch (Throwable $e) {
+    $stderr('GRESKA: ' . $e->getMessage());
+
+    if (($config['env'] ?? 'dev') === 'dev') {
+        $stderr();
+        $stderr($e->getTraceAsString());
+    }
+
+    exit(1);
+}
