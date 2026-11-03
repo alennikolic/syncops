@@ -24,7 +24,12 @@ RUN apk add --no-cache --virtual .build-deps \
         sodium \
         intl \
         opcache \
+        pcntl \
     && apk del .build-deps
+
+# pcntl je potreban workeru: bez njega SIGTERM (docker compose stop/restart)
+# prekida posao nasred prikupljanja i ostavlja ga u stanju "running", sto
+# zakljucava integraciju dok ne istekne rok za zaglavljene poslove.
 
 # Composer
 COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
