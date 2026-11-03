@@ -1,17 +1,11 @@
 <?php
-// src/Web/View/inventory/host.php
-//
-// Detalji jednog ESXi hosta: hardver iz SOAP-a, mašine koje sede na njemu i
-// journal promena.
+// src/Web/View/inventory/hosts.php
 //
 /** @var callable $e */
-/** @var array<string, mixed> $host */
-/** @var list<array<string,mixed>> $vms */
-/** @var list<array<string,mixed>> $changes */
+/** @var array{rows: list<array<string,mixed>>, total: int, page: int, pages: int} $result */
+/** @var array<string, string> $filters */
+/** @var array{clusters: list<array<string,mixed>>, states: list<string>} $options */
 /** @var array<int, int> $lastRuns */
-
-$lastRun = $lastRuns[(int) $host['integration_id']] ?? null;
-$missing = $lastRun !== null && (int) $host['last_run_id'] < $lastRun;
 
 $stateLabel = [
     'CONNECTED'      => 'povezan',
@@ -19,136 +13,95 @@ $stateLabel = [
     'NOT_RESPONDING' => 'ne odgovara',
 ];
 
-$powerLabel = [
-    'POWERED_ON'  => 'uključen',
-    'POWERED_OFF' => 'isključen',
-    'STANDBY'     => 'u pripravnosti',
-];
+$clusterNames = array_column($options['clusters'], 'name', 'moref');
+$active       = array_filter($filters, static fn (string $v): bool => $v !== '');
 
-$vmPowerLabel = [
-    'POWERED_ON'  => 'uključena',
-    'POWERED_OFF' => 'isključena',
-    'SUSPENDED'   => 'suspendovana',
-];
+$without = static function (string $key): string {
+    $params = $_GET;
+    unset($params[$key], $params['page']);
 
-$val = static function (mixed $v) use ($e): string {
-    return ($v === null || $v === '')
-        ? '<span class="muted">—</span>'
-        : '<span class="data">' . $e($v) . '</span>';
-};
-
-$gib = static function (mixed $bytes) use ($e): string {
-    return $bytes === null
-        ? '<span class="muted">—</span>'
-        : '<span class="data">' . $e(round((int) $bytes / 1024 ** 3)) . ' GiB</span>';
+    return $params === [] ? '/hosts' : '/hosts?' . http_build_query($params);
 };
 ?>
 
 <div class="page-head">
     <div>
-        <h1><?= $e($host['name']) ?></h1>
+        <h1>Hostovi</h1>
         <p>
-            <?= $e($stateLabel[$host['connection_state']] ?? ($host['connection_state'] ?? 'stanje nepoznato')) ?>
-            &middot; <?= $e($host['cluster_name'] ?? 'bez klastera') ?>
-            &middot; <?= $e($host['integration_name']) ?>
+            <?= $e($result['total']) ?> ESXi hostova<?= $active === [] ? '' : ' odgovara uslovima' ?>
         </p>
     </div>
-    <a href="/hosts" class="btn">Nazad na listu</a>
 </div>
 
-<?php if ($missing): ?>
-    <div class="flash flash-error">
-        Ovaj host nije viđen u poslednjem uspešnom prikupljanju. Možda je uklonjen iz vCentera,
-        ali SyncOPS taj zaključak ne donosi — red ostaje u bazi.
+<form method="get" action="/hosts" class="filters">
+    <div class="filter-search">
+        <input type="search" name="q" value="<?= $e($filters['search']) ?>"
+               placeholder="Ime, model, proizvođač, serijski broj ili moref">
+    </div>
+
+    <select name="state" aria-label="Stanje veze">
+        <option value="">Svako stanje</option>
+        <?php foreach ($options['states'] as $state): ?>
+            <option value="<?= $e($state) ?>" <?= $filters['state'] === $state ? 'selected' : '' ?>>
+                <?= $e($stateLabel[$state] ?? $state) ?>
+            </option>
+        <?php endforeach; ?>
+    </select>
+
+    <select name="cluster" aria-label="Klaster">
+        <option value="">Svaki klaster</option>
+        <?php foreach ($options['clusters'] as $cluster): ?>
+            <option value="<?= $e($cluster['moref']) ?>" <?= $filters['cluster'] === $cluster['moref'] ? 'selected' : '' ?>>
+                <?= $e($cluster['name']) ?>
+            </option>
+        <?php endforeach; ?>
+    </select>
+
+    <div class="filter-actions">
+        <button type="submit" class="btn btn-primary">Primeni</button>
+        <a href="/hosts/export<?= $_GET === [] ? '' : '?' . $e(http_build_query(array_diff_key($_GET, ['page' => 1]))) ?>"
+           class="btn">Izvezi CSV</a>
+    </div>
+</form>
+
+<?php if ($active !== []): ?>
+    <div class="chips">
+        <span>Uslovi:</span>
+
+        <?php if ($filters['search'] !== ''): ?>
+            <a href="<?= $e($without('q')) ?>" class="chip">
+                pretraga <b><?= $e($filters['search']) ?></b><span class="chip-x">×</span>
+            </a>
+        <?php endif; ?>
+
+        <?php if ($filters['state'] !== ''): ?>
+            <a href="<?= $e($without('state')) ?>" class="chip">
+                <b><?= $e($stateLabel[$filters['state']] ?? $filters['state']) ?></b><span class="chip-x">×</span>
+            </a>
+        <?php endif; ?>
+
+        <?php if ($filters['cluster'] !== ''): ?>
+            <a href="<?= $e($without('cluster')) ?>" class="chip">
+                klaster <b><?= $e($clusterNames[$filters['cluster']] ?? $filters['cluster']) ?></b><span class="chip-x">×</span>
+            </a>
+        <?php endif; ?>
+
+        <a href="/hosts" class="btn-link">Poništi sve</a>
     </div>
 <?php endif; ?>
-
-<?php if ($host['hardware_source'] === null): ?>
-    <div class="flash flash-error">
-        Hardverski podaci za ovaj host nisu prikupljeni. Razlog je jedan od tri: host je odvojen pa
-        nema šta da javi, SOAP krajnja tačka <code class="data">/sdk</code> nije dostupna, ili nalog
-        nema pravo čitanja. Razlog stoji uz odgovarajuće prikupljanje, na stranici
-        <a href="/runs">Prikupljanja</a>.
-    </div>
-<?php endif; ?>
-
-<div class="detail-grid">
-
-    <section class="panel">
-        <h2>Hardver</h2>
-        <dl>
-            <dt>Proizvođač</dt><dd><?= $val($host['vendor']) ?></dd>
-            <dt>Model</dt><dd><?= $val($host['model']) ?></dd>
-            <dt>Serijski broj</dt><dd><?= $val($host['serial_number']) ?></dd>
-            <dt>Inventarski broj</dt><dd><?= $val($host['asset_tag']) ?></dd>
-            <dt>Hardverski UUID</dt><dd><?= $val($host['hardware_uuid']) ?></dd>
-            <dt>BIOS</dt><dd><?= $val($host['bios_version']) ?></dd>
-        </dl>
-        <?php if ($host['hardware_source'] !== null): ?>
-            <p class="hint">Prikupljeno preko <?= $e(strtoupper((string) $host['hardware_source'])) ?> krajnje tačke.</p>
-        <?php endif; ?>
-    </section>
-
-    <section class="panel">
-        <h2>Procesor i memorija</h2>
-        <dl>
-            <dt>Model procesora</dt><dd><?= $val($host['cpu_model']) ?></dd>
-            <dt>Soketa</dt><dd><?= $val($host['cpu_sockets']) ?></dd>
-            <dt>Jezgara ukupno</dt><dd><?= $val($host['cpu_cores']) ?></dd>
-            <dt>Niti ukupno</dt><dd><?= $val($host['cpu_threads']) ?></dd>
-            <dt>Takt</dt><dd><?= $host['cpu_mhz'] === null ? '<span class="muted">—</span>' : '<span class="data">' . $e($host['cpu_mhz']) . ' MHz</span>' ?></dd>
-            <dt>Memorija</dt><dd><?= $gib($host['memory_bytes']) ?></dd>
-        </dl>
-    </section>
-
-    <section class="panel">
-        <h2>ESXi</h2>
-        <dl>
-            <dt>Verzija</dt><dd><?= $val($host['esxi_version']) ?></dd>
-            <dt>Build</dt><dd><?= $val($host['esxi_build']) ?></dd>
-            <dt>Stanje veze</dt><dd><?= $e($stateLabel[$host['connection_state']] ?? ($host['connection_state'] ?? '—')) ?></dd>
-            <dt>Napajanje</dt><dd>
-                <?= $host['power_state'] === null
-                    ? '<span class="muted">—</span>'
-                    : $e($powerLabel[$host['power_state']] ?? $host['power_state']) ?>
-            </dd>
-        </dl>
-        <?php if ($host['power_state'] === null && $host['connection_state'] === 'NOT_RESPONDING'): ?>
-            <p class="hint">vCenter ne javlja napajanje dok host ne odgovara — to nije greška u prikupljanju.</p>
-        <?php endif; ?>
-    </section>
-
-    <section class="panel">
-        <h2>Smeštaj</h2>
-        <dl>
-            <dt>Klaster</dt><dd><?= $val($host['cluster_name'] ?? $host['cluster_moref']) ?></dd>
-            <dt>Datacentar</dt><dd><?= $val($host['datacenter_moref']) ?></dd>
-            <dt>moref</dt><dd><?= $val($host['moref']) ?></dd>
-            <dt>Mašina na hostu</dt><dd><?= $val($host['vm_count']) ?></dd>
-        </dl>
-    </section>
-
-    <section class="panel">
-        <h2>Evidencija</h2>
-        <dl>
-            <dt>Prvi put viđeno</dt><dd><?= $val($host['first_seen']) ?></dd>
-            <dt>Poslednji put viđeno</dt><dd><?= $val($host['last_seen']) ?></dd>
-            <dt>Prvi run</dt><dd><?= $val($host['first_run_id']) ?></dd>
-            <dt>Poslednji run</dt><dd><?= $val($host['last_run_id']) ?></dd>
-        </dl>
-    </section>
-
-</div>
-
-<h2 class="section-head">
-    Mašine na hostu<?= $vms === [] ? '' : ' (' . $e(count($vms)) . ')' ?>
-</h2>
 
 <div class="panel">
-    <?php if ($vms === []): ?>
+    <?php if ($result['rows'] === []): ?>
 
         <div class="empty">
-            <p>Na ovom hostu nema nijedne mašine.</p>
+            <p>
+                <?= $active === []
+                    ? 'Nema hostova. Pokreni prikupljanje da bi se tabela popunila.'
+                    : 'Nema hostova koji odgovaraju zadatim uslovima.' ?>
+            </p>
+            <?php if ($active !== []): ?>
+                <a href="/hosts" class="btn">Poništi uslove</a>
+            <?php endif; ?>
         </div>
 
     <?php else: ?>
@@ -156,25 +109,80 @@ $gib = static function (mixed $bytes) use ($e): string {
         <table>
             <thead>
                 <tr>
-                    <th>Mašina</th>
+                    <th>Host</th>
                     <th>Stanje</th>
-                    <th>vCPU</th>
-                    <th>RAM</th>
-                    <th>IP adresa</th>
+                    <th>Klaster</th>
+                    <th>Mašina</th>
+                    <th>Hardver</th>
+                    <th>CPU / RAM</th>
+                    <th>ESXi</th>
+                    <th>Viđeno</th>
                 </tr>
             </thead>
             <tbody>
-            <?php foreach ($vms as $vm): ?>
+            <?php foreach ($result['rows'] as $host):
+                $lastRun = $lastRuns[(int) $host['integration_id']] ?? null;
+                $missing = $lastRun !== null && (int) $host['last_run_id'] < $lastRun;
+
+                $rail = $missing
+                    ? 'rail-bad'
+                    : match ($host['connection_state']) {
+                        'CONNECTED'      => 'rail-ok',
+                        'NOT_RESPONDING' => 'rail-warn',
+                        default          => 'rail-idle',
+                    };
+            ?>
                 <tr>
-                    <td class="rail <?= $vm['power_state'] === 'POWERED_ON' ? 'rail-ok' : 'rail-idle' ?>">
-                        <a href="/vms/<?= $e($vm['id']) ?>"><?= $e($vm['name']) ?></a>
+                    <td class="rail <?= $rail ?> stacked">
+                        <a href="/hosts/<?= $e($host['id']) ?>"><?= $e($host['name']) ?></a>
+                        <span class="sub data"><?= $e($host['moref']) ?></span>
                     </td>
-                    <td><?= $e($vmPowerLabel[$vm['power_state']] ?? ($vm['power_state'] ?? '—')) ?></td>
-                    <td class="data"><?= $e($vm['cpu_count'] ?? '—') ?></td>
-                    <td class="data">
-                        <?= $vm['memory_mib'] === null ? '—' : $e(round((int) $vm['memory_mib'] / 1024, 1)) . ' GiB' ?>
+
+                    <td class="stacked">
+                        <span><?= $e($stateLabel[$host['connection_state']] ?? ($host['connection_state'] ?? '—')) ?></span>
+                        <?php if ($host['power_state'] === null): ?>
+                            <span class="sub muted">napajanje nepoznato</span>
+                        <?php endif; ?>
                     </td>
-                    <td class="data"><?= $e($vm['guest_ip_address'] ?? '—') ?></td>
+
+                    <td><?= $e($host['cluster_name'] ?? '—') ?></td>
+                    <td class="data"><?= $e($host['vm_count']) ?></td>
+
+                    <td class="stacked">
+                        <?php if ($host['hardware_source'] === null): ?>
+                            <span class="muted">nije prikupljeno</span>
+                        <?php else: ?>
+                            <span><?= $e(trim(($host['vendor'] ?? '') . ' ' . ($host['model'] ?? '')) ?: '—') ?></span>
+                            <span class="sub data">SN <?= $e($host['serial_number'] ?? '—') ?></span>
+                        <?php endif; ?>
+                    </td>
+
+                    <td class="stacked">
+                        <?php if ($host['cpu_cores'] !== null || $host['memory_bytes'] !== null): ?>
+                            <span class="data"><?= $e($host['cpu_sockets'] ?? '?') ?>&times;<?= $e($host['cpu_cores'] ?? '?') ?> jezgara</span>
+                            <span class="sub data">
+                                <?= $host['memory_bytes'] === null ? '—' : $e(round((int) $host['memory_bytes'] / 1024 ** 3)) . ' GiB' ?>
+                            </span>
+                        <?php else: ?>
+                            <span class="muted">—</span>
+                        <?php endif; ?>
+                    </td>
+
+                    <td class="stacked">
+                        <?php if ($host['esxi_version'] !== null): ?>
+                            <span class="data"><?= $e($host['esxi_version']) ?></span>
+                            <span class="sub data">build <?= $e($host['esxi_build'] ?? '—') ?></span>
+                        <?php else: ?>
+                            <span class="muted">—</span>
+                        <?php endif; ?>
+                    </td>
+
+                    <td class="stacked">
+                        <span class="data"><?= $e(substr((string) $host['last_seen'], 0, 16)) ?></span>
+                        <?php if ($missing): ?>
+                            <span class="sub state-bad">nije u poslednjem run-u</span>
+                        <?php endif; ?>
+                    </td>
                 </tr>
             <?php endforeach; ?>
             </tbody>
@@ -183,43 +191,14 @@ $gib = static function (mixed $bytes) use ($e): string {
     <?php endif; ?>
 </div>
 
-<h2 class="section-head">Promene<?= $changes === [] ? '' : ' (' . $e(count($changes)) . ')' ?></h2>
+<?php if ($result['rows'] !== [] && array_filter($result['rows'], static fn ($h) => $h['hardware_source'] === null) !== []): ?>
+    <p class="note-block">
+        Hardverski podaci se prikupljaju preko SOAP krajnje tačke <code class="data">/sdk</code>, jer ih
+        REST API ne daje. Kada za neki host piše „nije prikupljeno", razlog je jedan od tri: host je
+        odvojen pa nema šta da javi, <code class="data">/sdk</code> nije dostupan, ili nalog nema pravo
+        čitanja. Razlog stoji uz odgovarajuće prikupljanje, na stranici
+        <a href="/runs">Prikupljanja</a>.
+    </p>
+<?php endif; ?>
 
-<div class="panel">
-    <?php if ($changes === []): ?>
-
-        <div class="empty">
-            <p>Nijedna promena nije zabeležena otkad se ovaj host prati.</p>
-        </div>
-
-    <?php else: ?>
-
-        <table>
-            <thead>
-                <tr>
-                    <th>Kada</th>
-                    <th>Run</th>
-                    <th>Pre</th>
-                    <th>Posle</th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php foreach ($changes as $change): ?>
-                <tr>
-                    <td class="data"><?= $e($change['changed_at']) ?></td>
-                    <td class="data">#<?= $e($change['run_id']) ?></td>
-                    <td><pre class="diff"><?= $e(json_encode(
-                        json_decode((string) $change['old_values'], true),
-                        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-                    )) ?></pre></td>
-                    <td><pre class="diff"><?= $e(json_encode(
-                        json_decode((string) $change['new_values'], true),
-                        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-                    )) ?></pre></td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
-
-    <?php endif; ?>
-</div>
+<?php require __DIR__ . '/../_pager.php'; ?>
