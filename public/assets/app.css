@@ -234,12 +234,67 @@ td.rail-idle { border-left-color: var(--idle); }
 .filters {
     display: flex;
     flex-wrap: wrap;
+    align-items: stretch;
     gap: 8px;
-    align-items: center;
-    margin-bottom: 16px;
+    padding: 10px;
+    margin-bottom: 14px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
 }
-.filters input[type="search"] { width: auto; min-width: 17rem; flex: 1 1 17rem; }
-.filters select { width: auto; }
+
+/* Pretraga uzima sav visak prostora, padajuci meniji ostaju na svojoj sirini. */
+.filters .filter-search { flex: 1 1 18rem; min-width: 12rem; display: flex; }
+.filters .filter-search input { width: 100%; }
+
+.filters select { width: auto; min-width: 9.5rem; }
+
+.filters .filter-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+}
+
+/* Oznake primenjenih uslova, svaka sa svojim gasenjem. */
+.chips {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+    margin: -4px 0 14px;
+    font-size: 13px;
+}
+.chips > span:first-child { color: var(--ink-soft); }
+
+.chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 6px 3px 9px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--ink);
+}
+.chip:hover { text-decoration: none; border-color: var(--accent); }
+.chip b { font-weight: 550; }
+.chip .chip-x {
+    display: inline-block;
+    width: 15px;
+    height: 15px;
+    line-height: 14px;
+    text-align: center;
+    border-radius: 50%;
+    background: var(--surface-2);
+    color: var(--ink-soft);
+    font-size: 12px;
+}
+.chip:hover .chip-x { background: var(--accent); color: var(--accent-ink); }
+
+/* Dve vrednosti u istoj celiji: glavna i njena pratnja ispod. */
+.stacked > span { display: block; }
+.stacked .sub { color: var(--ink-soft); font-size: 12.5px; }
 
 /* ------------------------------------------------------------------ */
 /* Stranicenje                                                          */
@@ -391,6 +446,7 @@ pre.diff {
 input[type="text"],
 input[type="password"],
 input[type="number"],
+input[type="search"],
 select {
     width: 100%;
     padding: 7px 10px;
@@ -404,7 +460,19 @@ select {
 input[type="text"]:focus,
 input[type="password"]:focus,
 input[type="number"]:focus,
+input[type="search"]:focus,
 select:focus { border-color: var(--accent); outline: none; background: var(--surface); }
+
+/* Select dobija strelicu i mesta za nju; bez ovoga je tekst zalepljen uz nju. */
+select {
+    appearance: none;
+    padding-right: 28px;
+    background-image: linear-gradient(45deg, transparent 50%, var(--ink-soft) 50%),
+                      linear-gradient(135deg, var(--ink-soft) 50%, transparent 50%);
+    background-position: calc(100% - 15px) calc(50% + 1px), calc(100% - 10px) calc(50% + 1px);
+    background-size: 5px 5px, 5px 5px;
+    background-repeat: no-repeat;
+}
 
 .field-inline { display: flex; align-items: center; gap: 8px; }
 .field-inline input { width: auto; }
@@ -493,7 +561,10 @@ select:focus { border-color: var(--accent); outline: none; background: var(--sur
     .main { padding: 20px 16px 40px; }
     .form-grid { grid-template-columns: 1fr; }
     .panel { overflow-x: auto; }
-    .filters input[type="search"] { min-width: 0; flex: 1 1 100%; }
+    .filters { padding: 8px; }
+    .filters .filter-search { flex: 1 1 100%; min-width: 0; }
+    .filters select { flex: 1 1 45%; min-width: 0; }
+    .filters .filter-actions { margin-left: 0; flex: 1 1 100%; }
     .detail-grid { grid-template-columns: 1fr; }
     .detail-grid dl { grid-template-columns: 1fr; gap: 0 0; }
     .detail-grid dt { margin-top: 8px; font-size: 13px; }
