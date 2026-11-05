@@ -1,24 +1,34 @@
 <?php
 // src/Web/View/integration/form.php
 //
+// Forma za dodavanje i izmenu integracije.
+//
+// Sablon ne zna sta je vCenter a sta AssetOPS. Sve razlike — da li postoji
+// korisnicko ime, kako se zove tajna, sta pise u objasnjenjima — dolaze iz
+// $spec, koji daje IntegrationType. Nov tip integracije se tako dodaje bez
+// diranja ovog fajla.
+//
 /** @var callable $e */
 /** @var \SyncOps\Integration\Integration|null $integration */
+/** @var string $type */
+/** @var array<string, mixed> $spec Opis forme za ovaj tip */
 /** @var array<string, string> $value */
-/** @var array<string, string> $flavors Dijalekt => opis; polje se prikazuje samo ako ih ima vise */
+/** @var array<string, string> $flavors Dijalekt => opis; polje se vidi samo ako ih ima vise */
 /** @var list<string> $errors */
 /** @var string $csrf */
 
 $isNew  = $integration === null;
 $action = $isNew ? '/integrations' : '/integrations/' . $integration->id;
+$noun   = (string) $spec['noun'];
 ?>
 
 <div class="page-head">
     <div>
-        <h1><?= $isNew ? 'Dodaj vCenter' : $e($integration->name) ?></h1>
+        <h1><?= $isNew ? 'Dodaj ' . $e($noun) : $e($integration->name) ?></h1>
         <p>
             <?= $isNew
-                ? 'Servisni nalog treba da ima samo Read-only rolu na root objektu, sa propagacijom.'
-                : 'Lozinku ostavi praznu ako je ne menjaš.' ?>
+                ? $e($spec['intro'])
+                : 'Ostavi ' . $e(mb_strtolower((string) $spec['secret_label'])) . ' prazan ako ga ne menjaš.' ?>
         </p>
     </div>
 </div>
@@ -33,6 +43,8 @@ $action = $isNew ? '/integrations' : '/integrations/' . $integration->id;
 
 <form method="post" action="<?= $e($action) ?>" class="form">
     <input type="hidden" name="csrf" value="<?= $e($csrf) ?>">
+    <?php /* Tip se posle kreiranja ne menja — vCenter ne postaje AssetOPS. */ ?>
+    <input type="hidden" name="type" value="<?= $e($type) ?>">
 
     <div class="panel">
 
@@ -40,7 +52,8 @@ $action = $isNew ? '/integrations' : '/integrations/' . $integration->id;
             <label for="name">Naziv</label>
             <span class="hint">Kako ćeš ga prepoznati u listi.</span>
             <input type="text" id="name" name="name" required
-                   value="<?= $e($value['name']) ?>" placeholder="vCenter Beograd">
+                   value="<?= $e($value['name']) ?>"
+                   placeholder="<?= $e($noun) ?> Beograd">
         </div>
 
         <div class="form-grid">
@@ -48,7 +61,8 @@ $action = $isNew ? '/integrations' : '/integrations/' . $integration->id;
                 <label for="hostname">Adresa</label>
                 <span class="hint">FQDN ili IP.</span>
                 <input type="text" id="hostname" name="hostname" required
-                       value="<?= $e($value['hostname']) ?>" placeholder="vcenter.primer.rs">
+                       value="<?= $e($value['hostname']) ?>"
+                       placeholder="<?= $e($spec['host_placeholder']) ?>">
             </div>
 
             <div class="field">
@@ -59,17 +73,22 @@ $action = $isNew ? '/integrations' : '/integrations/' . $integration->id;
             </div>
         </div>
 
-        <div class="field">
-            <label for="username">Korisničko ime</label>
-            <input type="text" id="username" name="username" required
-                   autocomplete="off"
-                   value="<?= $e($value['username']) ?>" placeholder="syncops@vsphere.local">
-        </div>
+        <?php if ($spec['has_username'] === true): ?>
+            <div class="field">
+                <label for="username"><?= $e($spec['username_label']) ?></label>
+                <input type="text" id="username" name="username" required
+                       autocomplete="off"
+                       value="<?= $e($value['username']) ?>"
+                       placeholder="<?= $e($spec['username_placeholder'] ?? '') ?>">
+            </div>
+        <?php endif; ?>
 
         <div class="field">
-            <label for="password">Lozinka</label>
+            <label for="password"><?= $e($spec['secret_label']) ?></label>
             <?php if (!$isNew): ?>
-                <span class="hint">Ostavi prazno da zadržiš postojeću.</span>
+                <span class="hint">Ostavi prazno da zadržiš postojeći.</span>
+            <?php elseif (($spec['secret_hint'] ?? '') !== ''): ?>
+                <span class="hint"><?= $e($spec['secret_hint']) ?></span>
             <?php endif; ?>
             <input type="password" id="password" name="password"
                    autocomplete="new-password" <?= $isNew ? 'required' : '' ?>>
@@ -93,13 +112,13 @@ $action = $isNew ? '/integrations' : '/integrations/' . $integration->id;
                    <?= $value['verify_peer'] === '1' ? 'checked' : '' ?>>
             <label for="verify_peer">Proveravaj TLS sertifikat</label>
         </div>
-        <span class="hint">Isključeno radi sa self-signed sertifikatom, što je na vCenterima uobičajeno.</span>
+        <span class="hint"><?= $e($spec['tls_hint']) ?></span>
 
     </div>
 
     <div class="form-actions">
         <button type="submit" class="btn btn-primary">
-            <?= $isNew ? 'Dodaj vCenter' : 'Sačuvaj izmene' ?>
+            <?= $isNew ? 'Dodaj ' . $e($noun) : 'Sačuvaj izmene' ?>
         </button>
         <a href="/integrations" class="btn">Odustani</a>
     </div>
