@@ -54,6 +54,7 @@ use SyncOps\Source\VCenter\VCenterSource;
 use SyncOps\Storage\AssetOpsRepository;
 use SyncOps\Storage\InventoryQuery;
 use SyncOps\Storage\LinkRepository;
+use SyncOps\Storage\SyncActionRepository;
 use SyncOps\Storage\Maintenance;
 use SyncOps\Storage\RawStore;
 use SyncOps\Storage\SchemaQuery;
@@ -143,6 +144,7 @@ try {
             $repo,
             new AssetOpsRepository($pdo),
             new LinkRepository($pdo),
+            new SyncActionRepository($pdo),
             $inventoryQuery,
             $view,
             $auth,
@@ -178,6 +180,7 @@ try {
         $router->post('/assetops/{id}/refresh', $assetOps->refresh(...));
         $router->post('/assetops/{id}/mapping', $assetOps->saveMapping(...));
         $router->post('/assetops/{id}/clean', $assetOps->cleanReference(...));
+        $router->post('/assetops/{id}/apply', $assetOps->applyPlan(...));
         $router->post('/assetops/{id}/match', $assetOps->saveLinks(...));
         $router->post('/assetops/{id}/unlink', $assetOps->unlink(...));
         $router->get('/runs', $runs->index(...));
