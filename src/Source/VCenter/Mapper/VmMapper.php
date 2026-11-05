@@ -54,6 +54,9 @@ final class VmMapper
             isTemplate:        (bool) ($detail['is_template'] ?? false),
             guestOs:           self::str($detail['guest_OS'] ?? $detail['guest_os'] ?? null),
             hardwareVersion:   self::str($hardware['version'] ?? null),
+            // Notes je slobodan tekst koji ljudi upisuju u vCenteru —
+            // cesto jedino mesto gde pise cemu masina sluzi i ciji je.
+            notes:             self::str($detail['notes'] ?? null),
 
             cpuCount:          self::int($cpu['count'] ?? null),
             cpuCoresPerSocket: self::int($cpu['cores_per_socket'] ?? null),
