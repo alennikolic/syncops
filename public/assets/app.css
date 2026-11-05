@@ -699,3 +699,18 @@ pre.raw-full {
     }
     .row-table th { padding: 10px 0 2px; border-bottom: 0; }
 }
+
+/* Jedino dugme koje nesto nepovratno brise. Crvena je ovde na mestu —
+   ona u ovom sistemu znaci stanje, a ovo jeste stanje u koje se ulazi. */
+.btn-danger {
+    background: var(--bad);
+    border-color: var(--bad);
+    color: #fff;
+    font-weight: 550;
+}
+.btn-danger:hover { background: var(--bad); filter: brightness(1.08); }
+.btn-danger:disabled {
+    opacity: .5;
+    cursor: not-allowed;
+    filter: none;
+}
