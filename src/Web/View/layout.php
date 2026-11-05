@@ -36,6 +36,9 @@ $nav = $nav ?? '';
             <a href="/hosts"    <?= $nav === 'hosts'    ? 'aria-current="page"' : '' ?>>Hostovi</a>
             <a href="/clusters" <?= $nav === 'clusters' ? 'aria-current="page"' : '' ?>>Klasteri</a>
 
+            <div class="nav-group">AssetOPS</div>
+            <a href="/assetops"     <?= $nav === 'assetops'     ? 'aria-current="page"' : '' ?>>Referentni podaci</a>
+
             <div class="nav-group">Podešavanje</div>
             <a href="/runs"         <?= $nav === 'runs'         ? 'aria-current="page"' : '' ?>>Prikupljanja</a>
             <a href="/integrations" <?= $nav === 'integrations' ? 'aria-current="page"' : '' ?>>Integracije</a>
