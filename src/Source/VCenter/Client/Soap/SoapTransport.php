@@ -187,7 +187,7 @@ class SoapTransport
     }
 
     /**
-     * Isti prevod kao u HttpTransport: brojevi a ne CURLE_* konstante, jer
+     * Brojevi a ne CURLE_* konstante, jer
      * deo njih ne postoji u svim PHP buildovima.
      */
     private function translateCurlError(int $errno, string $message): VCenterException
