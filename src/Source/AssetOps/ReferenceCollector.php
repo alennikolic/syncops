@@ -30,6 +30,11 @@ final class ReferenceCollector
         'visibility_group'   => '/api/visibility-groups/',
         'virtual_asset_type' => '/api/virtual-asset-types/',
         'asset_type'         => '/api/asset-types/',
+        // Definicije EAV atributa. Citaju se odavde a ne iz eav_fields u
+        // odgovoru liste: eav_fields izostavlja polja koja API vraca, a kod
+        // virtual-assets ume da bude prazan iako atributi za taj entitet
+        // postoje. Ovo je jedini pouzdan spisak.
+        'eav_attribute'      => '/api/eav/attributes/',
     ];
 
     /** Vrste koje stizu kao stablo i moraju da se spljoste. */
