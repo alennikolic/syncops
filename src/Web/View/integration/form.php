@@ -4,7 +4,7 @@
 /** @var callable $e */
 /** @var \SyncOps\Integration\Integration|null $integration */
 /** @var array<string, string> $value */
-/** @var array<string, array<string, string>> $flavors Grupa => dijalekt => opis */
+/** @var array<string, string> $flavors Dijalekt => opis; polje se prikazuje samo ako ih ima vise */
 /** @var list<string> $errors */
 /** @var string $csrf */
 
@@ -75,26 +75,18 @@ $action = $isNew ? '/integrations' : '/integrations/' . $integration->id;
                    autocomplete="new-password" <?= $isNew ? 'required' : '' ?>>
         </div>
 
-        <div class="field">
-            <label for="api_flavor">Protokol</label>
-            <span class="hint">
-                REST je jednostavniji i dovoljan za većinu posla. SOAP vraća ceo inventar
-                u jednom pozivu, i jedini daje VM templejte i hardver hostova.
-                Koji REST dijalekt vCenter govori zavisi od njegove verzije i prepoznaje se
-                sam — ručno se bira samo ako detekcija zakaže.
-            </span>
-            <select id="api_flavor" name="api_flavor">
-                <?php foreach ($flavors as $group => $options): ?>
-                    <optgroup label="<?= $e($group) ?>">
-                        <?php foreach ($options as $key => $label): ?>
-                            <option value="<?= $e($key) ?>" <?= $value['api_flavor'] === $key ? 'selected' : '' ?>>
-                                <?= $e($label) ?>
-                            </option>
-                        <?php endforeach; ?>
-                    </optgroup>
-                <?php endforeach; ?>
-            </select>
-        </div>
+        <?php if (count($flavors) > 1): ?>
+            <div class="field">
+                <label for="api_flavor">Protokol</label>
+                <select id="api_flavor" name="api_flavor">
+                    <?php foreach ($flavors as $key => $label): ?>
+                        <option value="<?= $e($key) ?>" <?= $value['api_flavor'] === $key ? 'selected' : '' ?>>
+                            <?= $e($label) ?>
+                        </option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+        <?php endif; ?>
 
         <div class="field field-inline">
             <input type="checkbox" id="verify_peer" name="verify_peer" value="1"
