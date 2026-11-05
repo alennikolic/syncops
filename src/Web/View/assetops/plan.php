@@ -12,6 +12,8 @@
 /** @var list<\SyncOps\Integration\Integration> $integrations */
 /** @var \SyncOps\Integration\Integration $integration */
 /** @var array<string, array<string, mixed>> $panels */
+/** @var list<array<string, mixed>> $journal */
+/** @var bool $applied da li je ikada nešto upisano */
 /** @var string $csrf */
 
 $switchTo = '/assetops/plan';
@@ -163,6 +165,42 @@ $show = static function (mixed $value) use ($e): string {
         </div>
     <?php endif; ?>
 
+    <?php if ($panel['actions'] !== []): ?>
+        <?php
+        // Jedino dugme u aplikaciji koje menja nešto u AssetOPS-u. Plan se
+        // pri kliku računa iznova — ovaj obrazac ne nosi šta se upisuje,
+        // samo za koju vrstu izvora.
+        $total = count($panel['actions']);
+        $limit = $applied ? min($total, 25) : min($total, 5);
+        ?>
+        <form method="post" action="/assetops/<?= $e($integration->id) ?>/apply">
+            <input type="hidden" name="csrf" value="<?= $e($csrf) ?>">
+            <input type="hidden" name="source_kind" value="<?= $e($sourceKind) ?>">
+
+            <div class="panel">
+                <?php if (!$applied): ?>
+                    <p class="note-block state-warn">
+                        Ovo bi bio <b>prvi upis u AssetOPS</b>. Prolazi samo prvih
+                        <?= $e($limit) ?> zapisa, pa ih pogledaj tamo pre ostatka — posle
+                        toga ograničenje više ne važi. Ništa se ne briše: SyncOPS samo
+                        kreira i menja.
+                    </p>
+                <?php elseif ($total > $limit): ?>
+                    <p class="note-block">
+                        Plan ima <?= $e($total) ?> akcija; u jednom prolazu ide
+                        <?= $e($limit) ?>. Pokreni više puta dok ne ostane ništa.
+                    </p>
+                <?php endif; ?>
+
+                <div class="form-actions">
+                    <button type="submit" class="btn btn-primary">
+                        Pokreni sinhronizaciju (<?= $e($limit) ?><?= $total > $limit ? ' od ' . $e($total) : '' ?>)
+                    </button>
+                </div>
+            </div>
+        </form>
+    <?php endif; ?>
+
     <?php if ($panel['skipped'] !== []): ?>
         <div class="panel">
             <details class="ref-list">
@@ -225,6 +263,59 @@ $show = static function (mixed $value) use ($e): string {
         </div>
     <?php endif; ?>
 <?php endforeach; ?>
+
+<?php if ($journal !== []): ?>
+    <h2 class="section-head">Dnevnik upisa</h2>
+
+    <div class="panel">
+        <div class="table-scroll">
+            <table>
+                <thead>
+                    <tr><th>Kada</th><th>Objekat</th><th>Šta</th><th>Ishod</th><th>Poruka</th></tr>
+                </thead>
+                <tbody>
+                <?php foreach ($journal as $entry):
+                    $rail = match ($entry['status']) {
+                        'applied' => 'rail-ok',
+                        'skipped' => 'rail-idle',
+                        default   => 'rail-bad',
+                    };
+                ?>
+                    <tr>
+                        <td class="rail <?= $rail ?> data">
+                            <?= $e(substr((string) $entry['created_at'], 0, 16)) ?>
+                        </td>
+                        <td>
+                            <?= $e($entry['source_name']) ?>
+                            <?php if ($entry['ci_uuid'] !== null): ?>
+                                <div class="sub data muted"><?= $e($entry['ci_uuid']) ?></div>
+                            <?php endif; ?>
+                        </td>
+                        <td><?= $entry['action'] === 'create' ? 'kreiranje' : 'izmena' ?></td>
+                        <td class="<?= $entry['status'] === 'failed' ? 'state-bad' : '' ?>">
+                            <?= match ($entry['status']) {
+                                'applied' => 'upisano',
+                                'skipped' => 'preskočeno',
+                                default   => 'neuspelo',
+                            } ?>
+                            <?php if ($entry['http_status'] !== null): ?>
+                                <span class="sub data muted">HTTP <?= $e($entry['http_status']) ?></span>
+                            <?php endif; ?>
+                        </td>
+                        <td><?= $e($entry['message'] ?? '—') ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    </div>
+<?php endif; ?>
+
+<p class="note-block">
+    Pred svaki upis CI se čita <b>iznova</b>, i telo se sastavlja od onoga što je tada u
+    AssetOPS-u. Između plana i upisa zapis je mogao da se promeni — a izmena koja više nije
+    potrebna tako nestane sama, bez upisa.
+</p>
 
 <p class="note-block">
     Telo izmene se ne sastavlja od polja koja se menjaju nego od pročitanog CI-ja, pa se
