@@ -122,6 +122,37 @@ final class LinkRepository
     }
 
     /**
+     * Zapamti sta je poslednji put poslato za jedan objekat.
+     *
+     * Cuva se celo telo, ne otisak. Hes odgovara na pitanje „da li se nesto
+     * promenilo", a pitanje koje se zaista postavlja je po polju: da li je
+     * covek rucno ispravio bas ovo polje posle naseg upisa. Hes se cuva uz
+     * njega, za brzo poredjenje „isto kao prosli put".
+     *
+     * @param array<string, mixed> $payload
+     */
+    public function recordPush(int $integrationId, string $sourceKind, int $sourceId, array $payload): void
+    {
+        $body = (string) json_encode($payload, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        $stmt = $this->pdo->prepare(
+            'UPDATE cmdb_link
+                SET pushed_hash    = :hash,
+                    pushed_payload = :body,
+                    pushed_at      = UTC_TIMESTAMP()
+              WHERE integration_id = :i AND source_kind = :k AND source_id = :s'
+        );
+
+        $stmt->execute([
+            'hash' => hash('sha256', $body),
+            'body' => $body,
+            'i'    => $integrationId,
+            'k'    => $sourceKind,
+            's'    => $sourceId,
+        ]);
+    }
+
+    /**
      * Koliko veza postoji, po vrsti izvora i jacini.
      *
      * @return array<string, array{total: int, confirmed: int}>
