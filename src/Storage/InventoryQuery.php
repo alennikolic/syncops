@@ -446,6 +446,9 @@ final class InventoryQuery
                 'v.instance_uuid',
                 'v.bios_uuid',
                 'v.moref',
+                // Notes je cesto jedino mesto gde pise cemu masina sluzi,
+                // pa je pretraga po njemu najkorisnija od svih.
+                'v.notes',
             ], (string) $filters['search'], $params);
         }
 
