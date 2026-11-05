@@ -61,45 +61,28 @@ final class Planner
 
         foreach ($inventory as $row) {
             $link = $links[(int) $row['id']] ?? null;
-            $ci   = $link === null ? null : ($cis[(string) $link['ci_uuid']] ?? null);
 
-            // Veza postoji, a CI-ja nema. Spajanje to vec prijavljuje; ovde
-            // se objekat samo preskace, da se ne bi kreirao duplikat pored
-            // CI-ja koji je mozda obrisan greskom.
-            if ($link !== null && $ci === null) {
-                $skipped[] = self::skip($row, 'veza pokazuje na CI kojeg nema — vidi Spajanje');
+            $one = self::forObject(
+                $row,
+                $link === null ? null : ($cis[(string) $link['ci_uuid']] ?? null),
+                $link,
+                $fieldMap,
+                $attributeTypes,
+                $sourceKind,
+                $typeSlug
+            );
+
+            if ($one === null) {
+                continue;
+            }
+
+            if ($one['action'] === 'skip') {
+                $skipped[] = $one;
 
                 continue;
             }
 
-            $blocked = self::blocked($typeSlug, $fieldMap, $sourceKind, $ci === null);
-
-            if ($blocked !== null) {
-                $skipped[] = self::skip($row, $blocked);
-
-                continue;
-            }
-
-            $resolved = ValueResolver::resolve($row, $fieldMap, $attributeTypes);
-
-            // Tvrdo pravilo: bez vrednosti kljuca se NE kreira. CI bez
-            // kljuca ne moze vise da se prepozna, pa bi svaki sledeci
-            // prolaz pravio novi duplikat pored njega.
-            if ($ci === null && $resolved['correlation'] === null) {
-                $skipped[] = self::skip($row, 'nema vrednosti ključa spajanja — CI bez ključa se ne kreira');
-
-                continue;
-            }
-
-            $action = $ci === null
-                ? self::create($row, $resolved, $typeSlug, $sourceKind)
-                : self::update($row, $ci, $link, $resolved, $typeSlug, $sourceKind, $attributeTypes);
-
-            if ($action === null) {
-                continue;
-            }
-
-            $actions[] = $action;
+            $actions[] = $one;
         }
 
         return [
@@ -116,6 +99,61 @@ final class Planner
     }
 
     // -----------------------------------------------------------------
+
+    /**
+     * Sta bi se uradilo sa JEDNIM objektom.
+     *
+     * Javno jer se koristi dvaput: pri pravljenju plana, i ponovo pred sam
+     * upis — tada nad SVEZE procitanim CI-jem. Izmedju planiranja i upisa
+     * zapis je mogao da se promeni, pa se telo sastavlja od onoga sto je
+     * tada tamo, a ne od onoga sto je bilo kad se plan racunao.
+     *
+     * Vraca akciju, red sa 'action' => 'skip' i razlogom, ili null kada
+     * nema sta da se radi.
+     *
+     * @param array<string, mixed>                $row
+     * @param array<string, mixed>|null           $ci
+     * @param array<string, mixed>|null           $link
+     * @param array<string, array<string, mixed>> $fieldMap
+     * @param array<string, string>               $attributeTypes
+     * @return array<string, mixed>|null
+     */
+    public static function forObject(
+        array $row,
+        ?array $ci,
+        ?array $link,
+        array $fieldMap,
+        array $attributeTypes,
+        string $sourceKind,
+        ?string $typeSlug,
+    ): ?array {
+        // Veza postoji, a CI-ja nema. Spajanje to vec prijavljuje; ovde se
+        // objekat samo preskace, da se ne bi kreirao duplikat pored CI-ja
+        // koji je mozda obrisan greskom.
+        if ($link !== null && $ci === null) {
+            return self::skip($row, 'veza pokazuje na CI kojeg nema — vidi Spajanje');
+        }
+
+        $blocked = self::blocked($typeSlug, $fieldMap, $sourceKind, $ci === null);
+
+        if ($blocked !== null) {
+            return self::skip($row, $blocked);
+        }
+
+        $resolved = ValueResolver::resolve($row, $fieldMap, $attributeTypes);
+
+        // Tvrdo pravilo: bez vrednosti kljuca se NE kreira. CI bez kljuca ne
+        // moze vise da se prepozna, pa bi svaki sledeci prolaz pravio novi
+        // duplikat pored njega.
+        if ($ci === null && $resolved['correlation'] === null) {
+            return self::skip($row, 'nema vrednosti ključa spajanja — CI bez ključa se ne kreira');
+        }
+
+        /** @var string $typeSlug blocked() je vec odbio prazan tip */
+        return $ci === null
+            ? self::create($row, $resolved, $typeSlug, $sourceKind)
+            : self::update($row, $ci, $link, $resolved, $typeSlug, $sourceKind, $attributeTypes);
+    }
 
     /**
      * Razlog zbog kog se za ovu vrstu ne moze upisivati, ili null.
@@ -514,6 +552,6 @@ final class Planner
      */
     private static function skip(array $row, string $reason): array
     {
-        return ['source' => $row, 'reason' => $reason];
+        return ['action' => 'skip', 'source' => $row, 'reason' => $reason];
     }
 }
