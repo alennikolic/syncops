@@ -84,9 +84,11 @@ use SyncOps\Source\VCenter\VCenterSource;
 use SyncOps\Storage\AssetOpsRepository;
 use SyncOps\Storage\InventoryQuery;
 use SyncOps\Storage\LinkRepository;
+use SyncOps\Storage\SyncActionRepository;
 use SyncOps\Storage\Maintenance;
 use SyncOps\Storage\RawStore;
 use SyncOps\Sync\FieldCatalog;
+use SyncOps\Sync\Applier;
 use SyncOps\Sync\Matcher;
 use SyncOps\Sync\Planner;
 use SyncOps\Storage\Repository\ClusterRepository;
@@ -160,6 +162,7 @@ $usage = static function () use ($stdout): void {
     $stdout('  assetops:collect <id>         Procitaj referentne spiskove i CI-jeve');
     $stdout('  assetops:match <id>           Predlog spajanja inventara i CI-jeva (bez upisa)');
     $stdout('  assetops:plan <id>            Sta bi se upisalo u AssetOPS (bez upisa)');
+    $stdout('  assetops:apply <id> [--limit=N]  UPISI plan u AssetOPS (menja tudji sistem)');
     $stdout('  assetops:probe <id>           Izmeri kako se AssetOPS ponasa pri upisu');
     $stdout();
     $stdout('Ostalo:');
@@ -195,6 +198,7 @@ $known = [
     'assetops:collect',
     'assetops:match',
     'assetops:plan',
+    'assetops:apply',
     'assetops:probe',
 ];
 
@@ -725,6 +729,120 @@ try {
         $stdout('Nista nije upisano — ovo je samo plan.');
 
         exit(0);
+    }
+
+    // =====================================================================
+    // UPIS u AssetOPS. Jedina komanda koja menja tudji sistem.
+    // =====================================================================
+    if ($command === 'assetops:apply') {
+        if ($integration->type !== IntegrationType::ASSETOPS) {
+            $stderr("Integracija {$id} nije AssetOPS.");
+            exit(1);
+        }
+
+        $assetOps  = new AssetOpsRepository($pdo);
+        $linksRepo = new LinkRepository($pdo);
+        $journal   = new SyncActionRepository($pdo);
+        $inventory = new InventoryQuery($pdo);
+        $mapping   = $assetOps->mapping($integration->id);
+
+        $wanted = null;
+
+        foreach ($argv as $arg) {
+            if (str_starts_with((string) $arg, '--limit=')) {
+                $wanted = max(1, (int) substr((string) $arg, 8));
+            }
+        }
+
+        $client  = (new AssetOpsClientFactory())->make($integration, $repo->password($integration->id));
+        $applier = new Applier($client, $linksRepo, $journal);
+        $allow   = $applier->allowance($integration->id, $wanted);
+
+        $stdout('Upis u ' . $integration->baseUrl());
+        $stdout();
+        $stdout('  Ovo MENJA podatke u AssetOPS-u: kreira i azurira CI-jeve. Nista se ne brise.');
+
+        if ($allow['pilot']) {
+            $stdout('  Prvi upis ikada — prolazi najvise ' . $allow['limit'] . ' zapisa.');
+        } else {
+            $stdout('  Po prolazu prolazi najvise ' . $allow['limit'] . ' zapisa.');
+        }
+
+        $stdout();
+
+        if (!in_array('--force', $argv, true) && !$askYesNo('Nastaviti')) {
+            $stdout('Odustao.');
+            exit(0);
+        }
+
+        $stdout();
+        $failed = 0;
+
+        foreach (FieldCatalog::ENTITY as $sourceKind => $entity) {
+            $typeSlug = $mapping[$sourceKind]['type_slug'] ?? null;
+
+            if ($typeSlug === null) {
+                $stdout(sprintf('%-6s tip CI-ja nije izabran u Mapiranju — preskaceno', $sourceKind));
+
+                continue;
+            }
+
+            $cis = [];
+
+            foreach ($assetOps->ciByEntity($integration->id, $entity) as $ci) {
+                $cis[(string) $ci['uuid']] = $ci;
+            }
+
+            $types = [];
+
+            foreach ($assetOps->attributesForEntity($integration->id, $entity) as $attribute) {
+                if (($attribute['missing'] ?? false) === true) {
+                    continue;
+                }
+
+                $types[(string) $attribute['slug']] = (string) ($attribute['attribute_type'] ?? '');
+            }
+
+            $rows = array_values(iterator_to_array(
+                $sourceKind === FieldCatalog::KIND_VM
+                    ? $inventory->vmsForExport()
+                    : $inventory->hostsForExport(),
+                false
+            ));
+
+            $fieldMap = $assetOps->fieldMap($integration->id, $sourceKind);
+
+            $plan = Planner::plan(
+                $rows,
+                $linksRepo->bySourceKind($integration->id, $sourceKind),
+                $cis,
+                $fieldMap,
+                $types,
+                $sourceKind,
+                $typeSlug
+            );
+
+            $result = $applier->apply(
+                $integration->id,
+                $sourceKind,
+                $plan['actions'],
+                $fieldMap,
+                $types,
+                $typeSlug,
+                $allow['limit']
+            );
+
+            $failed += $result['failed'];
+
+            $stdout(sprintf('%-6s kreirano %d, izmenjeno %d, preskoceno %d, neuspelo %d, ostalo %d',
+                $sourceKind, $result['created'], $result['updated'],
+                $result['skipped'], $result['failed'], $result['remaining']));
+        }
+
+        $stdout();
+        $stdout('Dnevnik: AssetOPS -> Plan, ili tabela sync_action.');
+
+        exit($failed > 0 ? 1 : 0);
     }
 
     // =====================================================================
