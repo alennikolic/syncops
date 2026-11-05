@@ -23,9 +23,11 @@ use SyncOps\Source\AssetOps\ReferenceCollector;
 use SyncOps\Storage\AssetOpsRepository;
 use SyncOps\Storage\InventoryQuery;
 use SyncOps\Storage\LinkRepository;
+use SyncOps\Storage\SyncActionRepository;
 use SyncOps\Sync\CiOverview;
 use SyncOps\Sync\FieldCatalog;
 use SyncOps\Sync\Matcher;
+use SyncOps\Sync\Applier;
 use SyncOps\Sync\Planner;
 use SyncOps\Sync\TargetCatalog;
 use SyncOps\Web\Auth;
@@ -39,6 +41,7 @@ final class AssetOpsController
         private readonly IntegrationRepository $integrations,
         private readonly AssetOpsRepository $repo,
         private readonly LinkRepository $links,
+        private readonly SyncActionRepository $journal,
         private readonly InventoryQuery $inventory,
         private readonly View $view,
         private readonly Auth $auth,
@@ -283,38 +286,10 @@ final class AssetOpsController
             return;
         }
 
-        $mapping = $this->repo->mapping($selected->id);
-        $panels  = [];
+        $panels = [];
 
         foreach (FieldCatalog::ENTITY as $sourceKind => $entity) {
-            $cis = [];
-
-            foreach ($this->repo->ciByEntity($selected->id, $entity) as $ci) {
-                $cis[(string) $ci['uuid']] = $ci;
-            }
-
-            $types = [];
-
-            foreach ($this->repo->attributesForEntity($selected->id, $entity) as $attribute) {
-                // Atribut kog vise nema u AssetOPS-u se ne upisuje. Izostaje
-                // iz spiska tipova, pa ga Planner odbija sa razlogom umesto
-                // da posalje vrednost u nepostojece polje.
-                if (($attribute['missing'] ?? false) === true) {
-                    continue;
-                }
-
-                $types[(string) $attribute['slug']] = (string) ($attribute['attribute_type'] ?? '');
-            }
-
-            $panels[$sourceKind] = Planner::plan(
-                inventory: $this->inventoryFor($sourceKind),
-                links: $this->links->bySourceKind($selected->id, $sourceKind),
-                cis: $cis,
-                fieldMap: $this->repo->fieldMap($selected->id, $sourceKind),
-                attributeTypes: $types,
-                sourceKind: $sourceKind,
-                typeSlug: $mapping[$sourceKind]['type_slug'] ?? null,
-            ) + [
+            $panels[$sourceKind] = $this->planFor($selected->id, $sourceKind, $entity) + [
                 'label'       => $sourceKind === FieldCatalog::KIND_VM ? 'Virtuelne mašine' : 'Hostovi',
                 'source_kind' => $sourceKind,
                 'labels'      => $this->targetLabels($selected->id, $sourceKind, $entity),
@@ -327,8 +302,163 @@ final class AssetOpsController
             'integrations' => $this->assetOpsIntegrations(),
             'integration'  => $selected,
             'panels'       => $panels,
+            'journal'      => $this->journal->recent($selected->id, 40),
+            'applied'      => $this->journal->hasApplied($selected->id),
             'csrf'         => $this->auth->csrfToken(),
         ]);
+    }
+
+    /**
+     * Plan za jednu vrstu izvora, sa svime što je potrebno i za upis.
+     *
+     * Isti račun koristi i ekran i dugme za sinhronizaciju — plan se nikad
+     * ne uzima iz obrasca nego se računa iznova. Inače bi se u AssetOPS
+     * moglo poslati bilo šta, a i predlog je mogao da zastari dok je
+     * stranica stajala otvorena.
+     *
+     * @return array<string, mixed>
+     */
+    private function planFor(int $integrationId, string $sourceKind, string $entity): array
+    {
+        $cis = [];
+
+        foreach ($this->repo->ciByEntity($integrationId, $entity) as $ci) {
+            $cis[(string) $ci['uuid']] = $ci;
+        }
+
+        $types = [];
+
+        foreach ($this->repo->attributesForEntity($integrationId, $entity) as $attribute) {
+            // Atribut kog više nema u AssetOPS-u se ne upisuje. Izostaje iz
+            // spiska tipova, pa ga Planner odbija sa razlogom umesto da
+            // pošalje vrednost u nepostojeće polje.
+            if (($attribute['missing'] ?? false) === true) {
+                continue;
+            }
+
+            $types[(string) $attribute['slug']] = (string) ($attribute['attribute_type'] ?? '');
+        }
+
+        $fieldMap = $this->repo->fieldMap($integrationId, $sourceKind);
+        $typeSlug = $this->repo->mapping($integrationId)[$sourceKind]['type_slug'] ?? null;
+
+        return Planner::plan(
+            inventory: $this->inventoryFor($sourceKind),
+            links: $this->links->bySourceKind($integrationId, $sourceKind),
+            cis: $cis,
+            fieldMap: $fieldMap,
+            attributeTypes: $types,
+            sourceKind: $sourceKind,
+            typeSlug: $typeSlug,
+        ) + [
+            'field_map'  => $fieldMap,
+            'types'      => $types,
+            'type_slug'  => $typeSlug,
+        ];
+    }
+
+    /**
+     * Pokreni sinhronizaciju: izvrši plan za jednu vrstu izvora.
+     *
+     * Ovo je jedino mesto u aplikaciji koje nešto menja u AssetOPS-u.
+     */
+    public function applyPlan(string $id): void
+    {
+        $integration = $this->requireAssetOps($id);
+
+        if ($integration === null) {
+            return;
+        }
+
+        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
+            $this->flash->error('Sesija je istekla. Pokušaj ponovo.');
+            header('Location: /assetops/plan');
+
+            return;
+        }
+
+        $sourceKind = (string) ($_POST['source_kind'] ?? '');
+
+        if (!isset(FieldCatalog::ENTITY[$sourceKind])) {
+            $this->flash->error('Nepoznata vrsta izvora.');
+            header('Location: /assetops/plan');
+
+            return;
+        }
+
+        $plan = $this->planFor($integration->id, $sourceKind, FieldCatalog::ENTITY[$sourceKind]);
+
+        if ($plan['actions'] === []) {
+            $this->flash->success('Nema šta da se upiše — plan je prazan.');
+            header('Location: /assetops/plan?integration=' . $integration->id);
+
+            return;
+        }
+
+        if ($plan['type_slug'] === null) {
+            $this->flash->error('Tip CI-ja nije izabran u Mapiranju.');
+            header('Location: /assetops/plan?integration=' . $integration->id);
+
+            return;
+        }
+
+        try {
+            $applier = new Applier(
+                $this->factory->make($integration, $this->integrations->password($integration->id)),
+                $this->links,
+                $this->journal,
+            );
+
+            $allowance = $applier->allowance($integration->id);
+
+            $result = $applier->apply(
+                integrationId: $integration->id,
+                sourceKind: $sourceKind,
+                actions: $plan['actions'],
+                fieldMap: $plan['field_map'],
+                attributeTypes: $plan['types'],
+                typeSlug: (string) $plan['type_slug'],
+                limit: $allowance['limit'],
+            );
+
+            $this->flash->success($this->applySummary($result, $allowance['pilot']));
+        } catch (AssetOpsException $e) {
+            $this->flash->error($e->getMessage());
+        } catch (Throwable $e) {
+            error_log('SyncOPS upis u AssetOPS: ' . $e->getMessage());
+            $this->flash->error('Neočekivana greška: ' . $e->getMessage());
+        }
+
+        header('Location: /assetops/plan?integration=' . $integration->id);
+    }
+
+    /**
+     * @param array{created: int, updated: int, skipped: int, failed: int,
+     *              remaining: int, notes: list<string>} $result
+     */
+    private function applySummary(array $result, bool $pilot): string
+    {
+        $parts = [];
+
+        foreach (['created' => 'kreirano', 'updated' => 'izmenjeno',
+                  'skipped' => 'preskočeno', 'failed' => 'neuspelo'] as $key => $label) {
+            if ($result[$key] > 0) {
+                $parts[] = "{$label} {$result[$key]}";
+            }
+        }
+
+        $message = $parts === [] ? 'Ništa nije poslato.' : ucfirst(implode(', ', $parts)) . '.';
+
+        if ($pilot) {
+            $message .= ' Ovo je bio prvi upis, pa je ograničen na ' . Applier::PILOT
+                      . ' zapisa — pogledaj ih u AssetOPS-u pre ostatka.';
+        }
+
+        if ($result['remaining'] > 0) {
+            $message .= ' Ostalo je još ' . $result['remaining'] . '; pokreni ponovo.';
+        }
+
+        return $message;
     }
 
     /**
