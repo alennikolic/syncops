@@ -1,12 +1,16 @@
 <?php
 // src/Web/View/assetops/index.php
 //
-// Referentni spiskovi iz AssetOPS-a i mapiranje.
+// Referentni spiskovi iz AssetOPS-a i mapiranje vCenter objekata na njih.
 //
-// Spiskovi se prikazuju onako kako stoje u AssetOPS-u: lokacije i tipovi
-// uvuceni po dubini stabla, statusi sa svojom bojom. Slug stoji uz svako ime
-// jer je on identitet — veza pri upisu ide slugom, a slug se ne izvodi iz
-// imena ("VM" ima slug "kub").
+// Stranica ima dva dela. Gore su prikupljeni spiskovi, skupljeni — otvara ih
+// onaj ko bas hoce da ih pregleda; lokacija ume da bude na desetine i inace
+// bi pojela ceo ekran. Dole je mapiranje, jedna tabela po vrsti izvora.
+//
+// U tabeli su tri vrste ciljeva i razlikuju se po tome odakle im vrednost:
+//   veza      iz prikupljenog spiska (status, lokacija, grupe) — salje se slug
+//   nativno   polje CI-ja, puni se iz vCentera
+//   atribut   EAV, puni se iz vCentera, oblik zavisi od tipa atributa
 //
 /** @var callable $e */
 /** @var list<\SyncOps\Integration\Integration> $integrations */
@@ -14,7 +18,10 @@
 /** @var array<string, list<array<string,mixed>>> $tables */
 /** @var array<string, string> $lastSeen */
 /** @var array<string, array<string,mixed>> $mapping */
-/** @var array<string, array<string,string>> $options */
+/** @var array<string, array<string,string>> $types */
+/** @var array<string, list<array<string,mixed>>> $fields */
+/** @var array<string, array<string, array<string,string>>> $sourceGroups */
+/** @var array<string, string> $policies */
 /** @var string $csrf */
 
 $titles = [
@@ -23,6 +30,7 @@ $titles = [
     'visibility_group'   => 'Visibility grupe',
     'virtual_asset_type' => 'Tipovi virtuelnih mašina',
     'asset_type'         => 'Tipovi opreme',
+    'eav_attribute'      => 'Definicije atributa',
 ];
 
 /** Red koji nije viđen u poslednjem osvežavanju. */
@@ -47,7 +55,7 @@ $total = array_sum(array_map('count', $tables));
         <p>
             <?= $e($integration->name) ?> &middot;
             <span class="data"><?= $e($integration->baseUrl()) ?></span> &middot;
-            <?= $e($total) ?> zapisa
+            <?= $e($total) ?> referentnih zapisa
         </p>
     </div>
     <div class="head-actions">
@@ -75,181 +83,132 @@ $total = array_sum(array_map('count', $tables));
         <div class="empty">
             <p>
                 Još ništa nije prikupljeno. Klikni „Prikupi sada" — pročitaće se lokacije,
-                statusi, visibility grupe i oba spiska tipova. Traje sekund.
+                statusi, visibility grupe, oba spiska tipova i definicije atributa. Traje sekund.
             </p>
         </div>
     </div>
 <?php endif; ?>
 
-<?php foreach ($titles as $kind => $title):
-    $rows = $tables[$kind] ?? [];
+<?php if ($total > 0): ?>
+    <h2 class="section-head">Prikupljeno iz AssetOPS-a</h2>
 
-    if ($rows === []) {
-        continue;
-    }
-?>
-    <h2 class="section-head"><?= $e($title) ?> (<?= $e(count($rows)) ?>)</h2>
+    <div class="panel">
+        <?php foreach ($titles as $kind => $title):
+            $rows = $tables[$kind] ?? [];
 
-    <div class="panel table-scroll">
-        <table>
-            <thead>
-                <tr>
-                    <th>Naziv</th>
-                    <th>Slug</th>
-                    <?php if ($kind === 'location'): ?>
-                        <th>Vrsta lokacije</th>
-                        <th>Nadređena</th>
-                    <?php elseif ($kind === 'status'): ?>
-                        <th>Boja</th>
-                    <?php elseif ($kind === 'asset_type'): ?>
-                        <th>Osnovno sredstvo</th>
-                        <th>U rek</th>
-                    <?php endif; ?>
-                    <th>Viđeno</th>
-                </tr>
-            </thead>
-            <tbody>
-            <?php foreach ($rows as $row):
-                $p       = $payload($row);
-                $missing = $stale($row, $lastSeen);
-            ?>
-                <tr>
-                    <td class="rail <?= $missing ? 'rail-bad' : 'rail-ok' ?>">
-                        <?= str_repeat('<span class="tree-indent"></span>', (int) $row['depth']) ?>
-                        <?= $e($row['name']) ?>
-                    </td>
-                    <td class="data"><?= $e($row['slug']) ?></td>
+            if ($rows === []) {
+                continue;
+            }
+        ?>
+            <details class="ref-list">
+                <summary>
+                    <?= $e($title) ?>
+                    <span class="muted"><?= $e(count($rows)) ?></span>
+                </summary>
 
-                    <?php if ($kind === 'location'): ?>
-                        <td><?= $e($p['location_type']['name'] ?? '—') ?></td>
-                        <td class="data"><?= $e($row['parent_slug'] ?? '—') ?></td>
-                    <?php elseif ($kind === 'status'): ?>
-                        <td>
-                            <?php if (($row['color'] ?? '') !== ''): ?>
-                                <span class="swatch" style="background: <?= $e($row['color']) ?>"></span>
-                                <span class="data"><?= $e($row['color']) ?></span>
-                            <?php else: ?>
-                                <span class="muted">—</span>
-                            <?php endif; ?>
-                        </td>
-                    <?php elseif ($kind === 'asset_type'): ?>
-                        <td><?= ($p['is_fixed_asset'] ?? false) ? 'da' : 'ne' ?></td>
-                        <td><?= ($p['is_rack_mountable'] ?? false) ? 'da' : 'ne' ?></td>
-                    <?php endif; ?>
+                <div class="table-scroll">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Naziv</th>
+                                <th>Slug</th>
+                                <?php if ($kind === 'location'): ?>
+                                    <th>Vrsta lokacije</th>
+                                    <th>Nadređena</th>
+                                <?php elseif ($kind === 'status'): ?>
+                                    <th>Boja</th>
+                                <?php elseif ($kind === 'asset_type'): ?>
+                                    <th>Osnovno sredstvo</th>
+                                    <th>U rek</th>
+                                <?php elseif ($kind === 'eav_attribute'): ?>
+                                    <th>Tip</th>
+                                    <th>Entiteti</th>
+                                <?php endif; ?>
+                                <th>Viđeno</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                        <?php foreach ($rows as $row):
+                            $p       = $payload($row);
+                            $missing = $stale($row, $lastSeen);
+                        ?>
+                            <tr>
+                                <td class="rail <?= $missing ? 'rail-bad' : 'rail-ok' ?>">
+                                    <?= str_repeat('<span class="tree-indent"></span>', (int) $row['depth']) ?>
+                                    <?= $e($row['name']) ?>
+                                </td>
+                                <td class="data"><?= $e($row['slug']) ?></td>
 
-                    <td class="stacked">
-                        <span class="data"><?= $e(substr((string) $row['last_seen'], 0, 16)) ?></span>
-                        <?php if ($missing): ?>
-                            <span class="sub state-bad">nije u poslednjem osvežavanju</span>
-                        <?php endif; ?>
-                    </td>
-                </tr>
-            <?php endforeach; ?>
-            </tbody>
-        </table>
+                                <?php if ($kind === 'location'): ?>
+                                    <td><?= $e($p['location_type']['name'] ?? '—') ?></td>
+                                    <td class="data"><?= $e($row['parent_slug'] ?? '—') ?></td>
+                                <?php elseif ($kind === 'status'): ?>
+                                    <td>
+                                        <?php if (($row['color'] ?? '') !== ''): ?>
+                                            <span class="swatch" style="background: <?= $e($row['color']) ?>"></span>
+                                            <span class="data"><?= $e($row['color']) ?></span>
+                                        <?php else: ?>
+                                            <span class="muted">—</span>
+                                        <?php endif; ?>
+                                    </td>
+                                <?php elseif ($kind === 'asset_type'): ?>
+                                    <td><?= ($p['is_fixed_asset'] ?? false) ? 'da' : 'ne' ?></td>
+                                    <td><?= ($p['is_rack_mountable'] ?? false) ? 'da' : 'ne' ?></td>
+                                <?php elseif ($kind === 'eav_attribute'): ?>
+                                    <td class="data"><?= $e($p['attribute_type']['slug'] ?? $p['attribute_type']['name'] ?? '—') ?></td>
+                                    <td class="data">
+                                        <?php
+                                        $entities = [];
+
+                                        foreach ((array) ($p['attribute_entities'] ?? []) as $entity) {
+                                            $entities[] = is_array($entity)
+                                                ? (string) ($entity['slug'] ?? $entity['name'] ?? '')
+                                                : (string) $entity;
+                                        }
+
+                                        echo $e(implode(', ', array_filter($entities)) ?: '—');
+                                        ?>
+                                    </td>
+                                <?php endif; ?>
+
+                                <td class="stacked">
+                                    <span class="data"><?= $e(substr((string) $row['last_seen'], 0, 16)) ?></span>
+                                    <?php if ($missing): ?>
+                                        <span class="sub state-bad">nije u poslednjem osvežavanju</span>
+                                    <?php endif; ?>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                </div>
+            </details>
+        <?php endforeach; ?>
     </div>
-<?php endforeach; ?>
+<?php endif; ?>
 
 <?php
 // -----------------------------------------------------------------
 // Mapiranje
 // -----------------------------------------------------------------
-$mapPanels = [
+$blocks = [
     'vm' => [
-        'naslov'  => 'Virtuelne mašine',
-        'opis'    => 'Mašina iz vCentera postaje virtual-asset u AssetOPS-u.',
-        'tipovi'  => 'virtual_asset_type',
-        'units'   => false,
+        'naslov' => 'Virtuelne mašine',
+        'opis'   => 'Mašina iz vCentera postaje virtual-asset. Ključ spajanja je po pravilu '
+                  . 'instance_uuid — ne menja se pri preimenovanju, vMotion-u ni reinstalaciji gosta.',
+        'tipovi' => 'Tip virtuelne mašine',
+        'units'  => false,
     ],
     'host' => [
-        'naslov'  => 'ESXi hostovi',
-        'opis'    => 'Host je fizička oprema, pa postaje asset — sa serijskim brojem i modelom.',
-        'tipovi'  => 'asset_type',
-        'units'   => true,
+        'naslov' => 'ESXi hostovi',
+        'opis'   => 'Host je fizička oprema, pa postaje asset. Ključ spajanja je hardware_uuid — '
+                  . 'ne zavisi od toga kako proizvođač prijavljuje serijski broj.',
+        'tipovi' => 'Tip opreme',
+        'units'  => true,
     ],
 ];
 
-$select = static function (string $name, array $choices, ?string $selected) use ($e): string {
-    $html = '<select name="' . $e($name) . '"><option value="">— nije izabrano —</option>';
-
-    foreach ($choices as $slug => $label) {
-        $html .= '<option value="' . $e($slug) . '"' . ($selected === $slug ? ' selected' : '') . '>'
-               . $e($label) . ' (' . $e($slug) . ')</option>';
-    }
-
-    return $html . '</select>';
-};
-?>
-
-<h2 class="section-head">Mapiranje</h2>
-
-<form method="post" action="/assetops/<?= $e($integration->id) ?>/mapping">
-    <input type="hidden" name="csrf" value="<?= $e($csrf) ?>">
-
-    <div class="detail-grid">
-        <?php foreach ($mapPanels as $kind => $spec):
-            $current = $mapping[$kind];
-        ?>
-            <section class="panel">
-                <h2><?= $e($spec['naslov']) ?></h2>
-                <p class="hint" style="margin-top:0"><?= $e($spec['opis']) ?></p>
-
-                <div class="field">
-                    <label for="<?= $e($kind) ?>_type">Tip</label>
-                    <?= $select($kind . '_type', $options[$spec['tipovi']], $current['type_slug']) ?>
-                </div>
-
-                <div class="field">
-                    <label for="<?= $e($kind) ?>_location">Podrazumevana lokacija</label>
-                    <?= $select($kind . '_location', $options['location'], $current['location_slug']) ?>
-                </div>
-
-                <div class="field">
-                    <label>Visibility grupe</label>
-                    <span class="hint">Bez bar jedne grupe AssetOPS odbija kreiranje.</span>
-                    <?php if ($options['visibility_group'] === []): ?>
-                        <span class="muted">Nije prikupljena nijedna grupa.</span>
-                    <?php else: ?>
-                        <?php foreach ($options['visibility_group'] as $slug => $label): ?>
-                            <label class="check">
-                                <input type="checkbox" name="<?= $e($kind) ?>_visibility_groups[]"
-                                       value="<?= $e($slug) ?>"
-                                       <?= in_array($slug, $current['visibility_groups'], true) ? 'checked' : '' ?>>
-                                <?= $e($label) ?> <span class="data muted">(<?= $e($slug) ?>)</span>
-                            </label>
-                        <?php endforeach; ?>
-                    <?php endif; ?>
-                </div>
-
-                <?php if ($spec['units'] === true): ?>
-                    <div class="field">
-                        <label for="host_units_required">Rek jedinica</label>
-                        <span class="hint">
-                            Koliko mesta server zauzima u reku. Swagger ga navodi kao obavezno
-                            polje pri kreiranju opreme, pa se šalje i kad nije poznato.
-                        </span>
-                        <input type="number" id="host_units_required" name="host_units_required"
-                               min="0" max="100" style="max-width:8rem"
-                               value="<?= $e($current['units_required'] ?? 1) ?>">
-                    </div>
-                <?php endif; ?>
-            </section>
-        <?php endforeach; ?>
-    </div>
-
-    <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Sačuvaj mapiranje</button>
-    </div>
-</form>
-
-<?php
-// -----------------------------------------------------------------
-// Polja i atributi
-// -----------------------------------------------------------------
-/** @var array<string, list<array<string,mixed>>> $fields */
-/** @var array<string, array<string, array<string,string>>> $sourceGroups */
-/** @var array<string, string> $policies */
-
+/** Padajući spisak izvornih polja iz vCentera, grupisan. */
 $sourceSelect = static function (string $kind, array $row, array $groups) use ($e): string {
     $html = '<select name="map[' . $e($kind) . '][' . $e($row['ref']) . '][source]">'
           . '<option value="">— ne puni se —</option>';
@@ -269,6 +228,38 @@ $sourceSelect = static function (string $kind, array $row, array $groups) use ($
     return $html . '</select>';
 };
 
+/** Fiksna vrednost veze, izabrana iz prikupljenog spiska. */
+$fixedSelect = static function (string $kind, array $row) use ($e): string {
+    if ($row['options'] === []) {
+        return '<span class="muted">spisak nije prikupljen</span>';
+    }
+
+    $name = 'map[' . $e($kind) . '][' . $e($row['ref']) . '][fixed]';
+
+    if ($row['multi'] === true) {
+        $html = '';
+
+        foreach ($row['options'] as $slug => $label) {
+            $html .= '<label class="check"><input type="checkbox" name="' . $name . '[]"'
+                   . ' value="' . $e($slug) . '"'
+                   . (in_array((string) $slug, $row['fixed'], true) ? ' checked' : '') . '>'
+                   . $e($label) . ' <span class="data muted">(' . $e($slug) . ')</span></label>';
+        }
+
+        return $html;
+    }
+
+    $html = '<select name="' . $name . '"><option value="">— nije izabrano —</option>';
+
+    foreach ($row['options'] as $slug => $label) {
+        $html .= '<option value="' . $e($slug) . '"'
+               . (in_array((string) $slug, $row['fixed'], true) ? ' selected' : '') . '>'
+               . $e($label) . ' (' . $e($slug) . ')</option>';
+    }
+
+    return $html . '</select>';
+};
+
 $policySelect = static function (string $kind, array $row, array $policies) use ($e): string {
     $html = '<select name="map[' . $e($kind) . '][' . $e($row['ref']) . '][policy]">';
 
@@ -281,21 +272,46 @@ $policySelect = static function (string $kind, array $row, array $policies) use 
     return $html . '</select>';
 };
 
-$blocks = [
-    'vm'   => ['Virtuelne mašine', 'Ključ spajanja je po pravilu instance_uuid — ne menja se pri preimenovanju, vMotion-u ni reinstalaciji gosta.'],
-    'host' => ['ESXi hostovi', 'Ključ spajanja je hardware_uuid — ne zavisi od toga kako proizvođač prijavljuje serijski broj.'],
-];
+$badge = ['relation' => 'veza', 'native' => 'nativno', 'eav' => 'atribut'];
 ?>
 
-<h2 class="section-head">Polja i atributi</h2>
+<h2 class="section-head">Mapiranje</h2>
 
-<form method="post" action="/assetops/<?= $e($integration->id) ?>/fields">
+<form method="post" action="/assetops/<?= $e($integration->id) ?>/mapping">
     <input type="hidden" name="csrf" value="<?= $e($csrf) ?>">
 
-    <?php foreach ($blocks as $kind => [$naslov, $opis]):
-        $rows = $fields[$kind] ?? [];
+    <?php foreach ($blocks as $kind => $spec):
+        $rows    = $fields[$kind] ?? [];
+        $current = $mapping[$kind];
     ?>
-        <h3 class="section-head" style="font-size:15px"><?= $e($naslov) ?></h3>
+        <h3 class="section-head" style="font-size:15px"><?= $e($spec['naslov']) ?></h3>
+
+        <div class="panel">
+            <p class="hint" style="margin:0 0 12px"><?= $e($spec['opis']) ?></p>
+
+            <div class="form-grid">
+                <div class="field">
+                    <label for="<?= $e($kind) ?>_type"><?= $e($spec['tipovi']) ?></label>
+                    <select id="<?= $e($kind) ?>_type" name="<?= $e($kind) ?>_type">
+                        <option value="">— nije izabran —</option>
+                        <?php foreach ($types[$kind] ?? [] as $slug => $label): ?>
+                            <option value="<?= $e($slug) ?>" <?= $current['type_slug'] === $slug ? 'selected' : '' ?>>
+                                <?= $e($label) ?> (<?= $e($slug) ?>)
+                            </option>
+                        <?php endforeach; ?>
+                    </select>
+                </div>
+
+                <?php if ($spec['units'] === true): ?>
+                    <div class="field">
+                        <label for="host_units_required">Rek jedinica</label>
+                        <span class="hint">Swagger ga navodi kao obavezan pri kreiranju opreme.</span>
+                        <input type="number" id="host_units_required" name="host_units_required"
+                               min="0" max="100" value="<?= $e($current['units_required'] ?? 1) ?>">
+                    </div>
+                <?php endif; ?>
+            </div>
+        </div>
 
         <div class="panel table-scroll">
             <?php if ($rows === []): ?>
@@ -303,35 +319,48 @@ $blocks = [
                     <p>Nema ciljnih polja. Prikupi referentne podatke da bi se učitale definicije atributa.</p>
                 </div>
             <?php else: ?>
-                <p class="hint" style="margin:0 0 10px"><?= $e($opis) ?></p>
-
                 <table>
                     <thead>
                         <tr>
                             <th>Polje u AssetOPS-u</th>
-                            <th>Tip</th>
-                            <th>Puni se iz vCentera</th>
+                            <th>Vrsta</th>
+                            <th>Vrednost</th>
                             <th>Pravilo</th>
-                            <th>Ključ spajanja</th>
+                            <th>Ključ</th>
                         </tr>
                     </thead>
                     <tbody>
-                    <?php foreach ($rows as $row): ?>
+                    <?php foreach ($rows as $row):
+                        $rail = $row['is_correlation']
+                            ? 'rail-ok'
+                            : ($row['write_policy'] === 'never'
+                                ? ($row['required'] ? 'rail-bad' : 'rail-idle')
+                                : 'rail-warn');
+                    ?>
                         <tr>
-                            <td class="rail <?= $row['is_correlation'] ? 'rail-ok' : ($row['write_policy'] === 'never' ? 'rail-idle' : 'rail-warn') ?> stacked">
-                                <span><?= $e($row['label']) ?></span>
+                            <td class="rail <?= $rail ?> stacked">
+                                <span>
+                                    <?= $e($row['label']) ?>
+                                    <?php if ($row['required'] === true): ?>
+                                        <span class="tag">obavezno</span>
+                                    <?php endif; ?>
+                                </span>
                                 <span class="sub data"><?= $e($row['key']) ?></span>
                             </td>
-                            <td>
-                                <span class="tag"><?= $e($row['kind'] === 'eav' ? 'atribut' : 'nativno') ?></span>
+                            <td class="stacked">
+                                <span class="tag"><?= $e($badge[$row['kind']] ?? $row['kind']) ?></span>
                                 <?php if ($row['type'] !== ''): ?>
                                     <span class="sub data muted"><?= $e($row['type']) ?></span>
                                 <?php endif; ?>
                             </td>
-                            <td><?= $sourceSelect($kind, $row, $sourceGroups[$kind] ?? []) ?></td>
+                            <td>
+                                <?= $row['kind'] === 'relation'
+                                    ? $fixedSelect($kind, $row)
+                                    : $sourceSelect($kind, $row, $sourceGroups[$kind] ?? []) ?>
+                            </td>
                             <td><?= $policySelect($kind, $row, $policies) ?></td>
                             <td>
-                                <?php /* Samo EAV atribut moze da nosi kljuc: nativnog polja za
+                                <?php /* Kljuc nosi samo EAV atribut: nativnog polja za
                                          instance_uuid u AssetOPS-u nema. */ ?>
                                 <?php if ($row['kind'] === 'eav'): ?>
                                     <label class="check">
@@ -353,19 +382,20 @@ $blocks = [
     <?php endforeach; ?>
 
     <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Sačuvaj polja</button>
+        <button type="submit" class="btn btn-primary">Sačuvaj mapiranje</button>
     </div>
 </form>
 
 <p class="note-block">
-    Ključ spajanja se uvek upisuje <b>samo pri kreiranju</b>, bez obzira na izabrano pravilo —
-    vrednost po kojoj se CI prepoznaje ne sme da se menja. Najviše jedan ključ po vrsti.
-    AssetOPS ne ume da filtrira po EAV vrednosti, pa se spajanje radi čitanjem svih CI-jeva i
-    poređenjem lokalno; atribut je trajno sidro, a ne brz put do zapisa.
+    Veze nose <b>slug</b>, ne ime — zato se za njih bira vrednost iz prikupljenog spiska umesto
+    polja iz vCentera. Slug se ne izvodi iz imena: <span class="data">VM</span> ima slug
+    <span class="data">kub</span>, <span class="data">Beograd</span> ima
+    <span class="data">beograd-3</span>.
 </p>
 
 <p class="note-block">
-    Veze se u AssetOPS šalju kao <b>slugovi</b>, ne kao imena. Zato uz svako ime stoji i slug —
-    i zato se spiskovi prikupljaju umesto da se kucaju: slug se ne izvodi iz imena, pa bi
-    pogađanje promašilo (<span class="data">VM</span> ima slug <span class="data">kub</span>).
+    Ključ spajanja se uvek upisuje <b>samo pri kreiranju</b>, bez obzira na izabrano pravilo —
+    vrednost po kojoj se CI prepoznaje ne sme da se menja. Najviše jedan po vrsti.
+    AssetOPS ne ume da filtrira po vrednosti atributa, pa je atribut trajno sidro, a ne brz
+    put do zapisa; spajanje se radi čitanjem svih CI-jeva i poređenjem lokalno.
 </p>
