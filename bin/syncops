@@ -82,8 +82,12 @@ use SyncOps\Source\AssetOps\ConnectionTester as AssetOpsTester;
 use SyncOps\Source\VCenter\ConnectionTester as VCenterTester;
 use SyncOps\Source\VCenter\VCenterSource;
 use SyncOps\Storage\AssetOpsRepository;
+use SyncOps\Storage\InventoryQuery;
+use SyncOps\Storage\LinkRepository;
 use SyncOps\Storage\Maintenance;
 use SyncOps\Storage\RawStore;
+use SyncOps\Sync\FieldCatalog;
+use SyncOps\Sync\Matcher;
 use SyncOps\Storage\Repository\ClusterRepository;
 use SyncOps\Storage\Repository\HostRepository;
 use SyncOps\Storage\Repository\VmRepository;
@@ -153,6 +157,7 @@ $usage = static function () use ($stdout): void {
     $stdout('  integration:enable <id>       Aktiviraj');
     $stdout('  integration:disable <id>      Deaktiviraj');
     $stdout('  assetops:collect <id>         Procitaj referentne spiskove i CI-jeve');
+    $stdout('  assetops:match <id>           Predlog spajanja inventara i CI-jeva (bez upisa)');
     $stdout('  assetops:probe <id>           Izmeri kako se AssetOPS ponasa pri upisu');
     $stdout();
     $stdout('Ostalo:');
@@ -186,6 +191,7 @@ $known = [
     'integration:enable',
     'integration:disable',
     'assetops:collect',
+    'assetops:match',
     'assetops:probe',
 ];
 
@@ -583,6 +589,65 @@ try {
 
         $stdout();
         $stdout(sprintf('HTTP poziva: %d', $client->callCount()));
+
+        exit(0);
+    }
+
+    // =====================================================================
+    // Predlog spajanja. Cita iz baze, ne zove AssetOPS i nista ne upisuje.
+    // =====================================================================
+    if ($command === 'assetops:match') {
+        if ($integration->type !== IntegrationType::ASSETOPS) {
+            $stderr("Integracija {$id} nije AssetOPS.");
+            exit(1);
+        }
+
+        $assetOps  = new AssetOpsRepository($pdo);
+        $links     = new LinkRepository($pdo);
+        $inventory = new InventoryQuery($pdo);
+
+        foreach (FieldCatalog::ENTITY as $sourceKind => $entity) {
+            $field = null;
+
+            foreach ($assetOps->fieldMap($integration->id, $sourceKind) as $row) {
+                if (($row['is_correlation'] ?? false) === true) {
+                    $field = ($row['source_field'] ?? '') === '' ? null : (string) $row['source_field'];
+                }
+            }
+
+            $rows = array_values(iterator_to_array(
+                $sourceKind === FieldCatalog::KIND_VM
+                    ? $inventory->vmsForExport()
+                    : $inventory->hostsForExport(),
+                false
+            ));
+
+            $plan = Matcher::plan(
+                $rows,
+                $assetOps->ciByEntity($integration->id, $entity),
+                $links->bySourceKind($integration->id, $sourceKind),
+                $field,
+                FieldCatalog::weakFields($sourceKind)
+            );
+
+            $stdout(strtoupper($sourceKind) . '  (kljuc: ' . ($field ?? 'nije podesen') . ')');
+
+            foreach ($plan['counts'] as $label => $count) {
+                $stdout(sprintf('  %-12s %5d', $label, $count));
+            }
+
+            foreach (['conflicts' => 'SUKOB', 'broken' => 'RASKINUTO'] as $key => $mark) {
+                foreach ($plan[$key] as $item) {
+                    $stdout(sprintf('  %s  %s  %s', $mark,
+                        (string) ($item['source']['name'] ?? '?'),
+                        (string) ($item['reason'] ?? 'CI vise ne postoji')));
+                }
+            }
+
+            $stdout();
+        }
+
+        $stdout('Nista nije upisano — ovo je samo predlog.');
 
         exit(0);
     }
