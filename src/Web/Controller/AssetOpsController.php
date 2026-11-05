@@ -68,6 +68,7 @@ final class AssetOpsController
 
         $this->view->render('assetops/index', [
             'title'        => 'Referentni podaci',
+            'vanished'     => $this->repo->staleReference($selected->id),
             'nav'          => 'assetops',
             'integrations' => $this->assetOpsIntegrations(),
             'integration'  => $selected,
@@ -561,6 +562,44 @@ final class AssetOpsController
         } catch (Throwable $e) {
             error_log('SyncOPS AssetOPS prikupljanje: ' . $e->getMessage());
             $this->flash->error('Neočekivana greška: ' . $e->getMessage());
+        }
+
+        header('Location: /assetops?integration=' . $integration->id);
+    }
+
+    /**
+     * Obriši referentne redove kojih više nema u AssetOPS-u.
+     *
+     * Red na koji još pokazuje mapiranje se zadržava — on je jedino mesto
+     * na kom se vidi da podešavanje pokazuje u nešto čega nema.
+     */
+    public function cleanReference(string $id): void
+    {
+        $integration = $this->requireAssetOps($id);
+
+        if ($integration === null) {
+            return;
+        }
+
+        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
+            $this->flash->error('Sesija je istekla. Pokušaj ponovo.');
+            header('Location: /assetops');
+
+            return;
+        }
+
+        $result = $this->repo->removeStaleReference($integration->id);
+
+        if ($result['removed'] === 0 && $result['kept'] === 0) {
+            $this->flash->success('Nema šta da se čisti — svi redovi su bili u poslednjem prikupljanju.');
+        } else {
+            $this->flash->success(sprintf(
+                'Obrisano %d.%s',
+                $result['removed'],
+                $result['kept'] > 0
+                    ? sprintf(' Zadržano %d, jer na njih još pokazuje Mapiranje.', $result['kept'])
+                    : ''
+            ));
         }
 
         header('Location: /assetops?integration=' . $integration->id);
