@@ -58,6 +58,17 @@ $bytes = static function (mixed $b) use ($e): string {
     </div>
 <?php endif; ?>
 
+<?php if (($vm['notes'] ?? '') !== ''): ?>
+    <section class="panel notes">
+        <h2>Notes</h2>
+        <?php /* Tekst je kakav je upisan u vCenteru: prelomi redova se cuvaju,
+                 a escape-ovanje ide kroz $e, pa HTML iz Notes-a ne moze da
+                 pobegne u stranicu. */ ?>
+        <div class="notes-body"><?= nl2br($e($vm['notes']), false) ?></div>
+        <p class="hint">Slobodan tekst iz vCentera — SyncOPS ga ne tumači.</p>
+    </section>
+<?php endif; ?>
+
 <div class="detail-grid">
 
     <section class="panel">
