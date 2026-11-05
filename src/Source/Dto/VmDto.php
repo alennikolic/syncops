@@ -23,6 +23,8 @@ final class VmDto implements InventoryDto
         public readonly bool $isTemplate,
         public readonly ?string $guestOs,
         public readonly ?string $hardwareVersion,
+        /** Notes iz vCentera (config.annotation) */
+        public readonly ?string $notes,
         public readonly ?int $cpuCount,
         public readonly ?int $cpuCoresPerSocket,
         public readonly ?int $memoryMib,
@@ -59,6 +61,7 @@ final class VmDto implements InventoryDto
             'power_state'          => $this->powerState,
             'is_template'          => $this->isTemplate,
             'guest_os'             => $this->guestOs,
+            'notes'                => $this->notes,
             'hardware_version'     => $this->hardwareVersion,
             'cpu_count'            => $this->cpuCount,
             'cpu_cores_per_socket' => $this->cpuCoresPerSocket,
