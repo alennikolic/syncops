@@ -23,11 +23,21 @@ final class IntegrationType
 {
     public const VCENTER = 'vcenter';
 
+    /** Grupe u padajucem spisku, redom kojim se prikazuju. */
+    public const GROUP_MAIN   = 'Protokol';
+    public const GROUP_MANUAL = 'Ručno biranje REST dijalekta';
+
     /**
      * Tip => opis, podrazumevan dijalekt i dijalekti.
      *
      * Kod svakog dijalekta "label" ide u formu, gde ima mesta za objasnjenje,
      * a "short" u tabele, gde ga ima za nekoliko znakova.
+     *
+     * Zasto su dijalekti podeljeni u grupe: koji REST dijalekt vCenter govori
+     * nije odluka nego posledica njegove verzije, i program to sam utvrdi.
+     * Jedina stvarna odluka je REST ili SOAP. Zato "auto" stoji kao obican
+     * REST, a dva dijalekta se nude samo kao izlaz u nuzdi — kada detekcija
+     * iz nekog razloga ne radi.
      */
     private const TYPES = [
         self::VCENTER => [
@@ -35,20 +45,24 @@ final class IntegrationType
             'default' => Integration::FLAVOR_AUTO,
             'flavors' => [
                 Integration::FLAVOR_AUTO => [
-                    'label' => 'Prepoznaj sam — proba /api pa /rest',
-                    'short' => 'prepoznaje sam',
-                ],
-                Integration::FLAVOR_API_V2 => [
-                    'label' => 'REST /api — vSphere 7.0 U2 i noviji',
-                    'short' => '/api',
-                ],
-                Integration::FLAVOR_REST_LEGACY => [
-                    'label' => 'REST /rest — vSphere 6.7 do 7.0',
-                    'short' => '/rest',
+                    'label' => 'REST — dijalekt se prepoznaje sam',
+                    'short' => 'REST',
+                    'group' => self::GROUP_MAIN,
                 ],
                 Integration::FLAVOR_SOAP => [
-                    'label' => 'SOAP /sdk — sve verzije, jedini daje templejte i hardver hostova',
+                    'label' => 'SOAP /sdk — jedini daje templejte i hardver hostova',
                     'short' => '/sdk',
+                    'group' => self::GROUP_MAIN,
+                ],
+                Integration::FLAVOR_API_V2 => [
+                    'label' => '/api — vSphere 7.0 U2 i noviji',
+                    'short' => '/api',
+                    'group' => self::GROUP_MANUAL,
+                ],
+                Integration::FLAVOR_REST_LEGACY => [
+                    'label' => '/rest — vSphere 6.7 do 7.0',
+                    'short' => '/rest',
+                    'group' => self::GROUP_MANUAL,
                 ],
             ],
         ],
@@ -88,6 +102,22 @@ final class IntegrationType
             static fn (array $flavor): string => $flavor['label'],
             self::TYPES[$type]['flavors'] ?? []
         );
+    }
+
+    /**
+     * Dijalekti grupisani za padajuci spisak.
+     *
+     * @return array<string, array<string, string>> naziv grupe => dijalekt => opis
+     */
+    public static function flavorGroups(string $type): array
+    {
+        $groups = [];
+
+        foreach (self::TYPES[$type]['flavors'] ?? [] as $key => $flavor) {
+            $groups[$flavor['group'] ?? self::GROUP_MAIN][$key] = $flavor['label'];
+        }
+
+        return $groups;
     }
 
     /**
