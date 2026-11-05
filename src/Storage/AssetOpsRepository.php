@@ -162,6 +162,178 @@ final class AssetOpsRepository
         return $options;
     }
 
+    /**
+     * EAV atributi primenjivi na jedan entitet (virtual-asset ili asset).
+     *
+     * Atribut je vezan za ENTITET, ne za tip CI-ja, pa se spisak ne menja
+     * kada se promeni izabrani tip.
+     *
+     * attribute_entities ume da stigne kao niz stringova ili kao niz objekata
+     * sa slugom — prihvataju se oba, da jedna izmena na njihovoj strani ne
+     * isprazni ceo ekran.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function attributesForEntity(int $integrationId, string $entity): array
+    {
+        $matching = [];
+
+        foreach ($this->byKind($integrationId, 'eav_attribute') as $row) {
+            $payload = json_decode((string) $row['payload'], true);
+
+            if (!is_array($payload)) {
+                continue;
+            }
+
+            if (!in_array($entity, $this->entitySlugs($payload['attribute_entities'] ?? []), true)) {
+                continue;
+            }
+
+            $type = $payload['attribute_type'] ?? null;
+
+            $row['attribute_type'] = is_array($type)
+                ? (string) ($type['slug'] ?? $type['name'] ?? '')
+                : (string) ($type ?? '');
+
+            $row['possible_values'] = is_array($payload['possible_select_values'] ?? null)
+                ? $payload['possible_select_values']
+                : [];
+
+            $matching[] = $row;
+        }
+
+        return $matching;
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function entitySlugs(mixed $entities): array
+    {
+        if (!is_array($entities)) {
+            return [];
+        }
+
+        $slugs = [];
+
+        foreach ($entities as $entity) {
+            if (is_string($entity)) {
+                $slugs[] = $entity;
+            } elseif (is_array($entity)) {
+                $slug = $entity['slug'] ?? $entity['name'] ?? null;
+
+                if (is_string($slug)) {
+                    $slugs[] = $slug;
+                }
+            }
+        }
+
+        return $slugs;
+    }
+
+    // -----------------------------------------------------------------
+    // Mapiranje polja
+    // -----------------------------------------------------------------
+
+    /**
+     * Mapiranje polja za jednu vrstu izvora, po cilju.
+     *
+     * Kljuc je "vrsta:ime" ("native:name", "eav:instance-uuid"), isto kako
+     * forma imenuje svoja polja — da prikaz ne mora nista da sastavlja.
+     *
+     * @return array<string, array<string, mixed>>
+     */
+    public function fieldMap(int $integrationId, string $sourceKind): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM ao_field_map
+              WHERE integration_id = :i AND source_kind = :k'
+        );
+        $stmt->execute(['i' => $integrationId, 'k' => $sourceKind]);
+
+        $byTarget = [];
+
+        foreach ($stmt->fetchAll() as $row) {
+            $byTarget[$row['target_kind'] . ':' . $row['target_key']] = [
+                'source_field'   => $row['source_field'],
+                'constant_value' => $row['constant_value'],
+                'write_policy'   => (string) $row['write_policy'],
+                'is_correlation' => (bool) $row['is_correlation'],
+            ];
+        }
+
+        return $byTarget;
+    }
+
+    /**
+     * Prepisi mapiranje za jednu vrstu izvora.
+     *
+     * Brise pa upisuje, u transakciji: forma uvek salje ceo spisak, pa bi
+     * dopunjavanje ostavljalo redove za ciljeve koji su u medjuvremenu
+     * nestali iz AssetOPS-a.
+     *
+     * Kljuc spajanja je najvise jedan po vrsti izvora. Pravilo se cuva ovde
+     * jer ga jedinstveni indeks ne moze iskazati, a dva kljuca bi znacila dva
+     * razlicita odgovora na pitanje koji CI odgovara kojoj masini.
+     *
+     * @param list<array{target_kind: string, target_key: string, source_field: ?string,
+     *                   constant_value: ?string, write_policy: string, is_correlation: bool}> $rows
+     */
+    public function saveFieldMap(int $integrationId, string $sourceKind, array $rows): void
+    {
+        $this->pdo->beginTransaction();
+
+        try {
+            $clear = $this->pdo->prepare(
+                'DELETE FROM ao_field_map WHERE integration_id = :i AND source_kind = :k'
+            );
+            $clear->execute(['i' => $integrationId, 'k' => $sourceKind]);
+
+            $insert = $this->pdo->prepare(
+                'INSERT INTO ao_field_map
+                    (integration_id, source_kind, target_kind, target_key,
+                     source_field, constant_value, write_policy, is_correlation, updated_at)
+                 VALUES
+                    (:i, :k, :tk, :key, :src, :const, :policy, :corr, UTC_TIMESTAMP())'
+            );
+
+            $correlationUsed = false;
+
+            foreach ($rows as $row) {
+                // Red koji nista ne radi i nije kljuc nema sta da se pamti.
+                if ($row['write_policy'] === 'never' && $row['is_correlation'] === false) {
+                    continue;
+                }
+
+                $isCorrelation = $row['is_correlation'] && !$correlationUsed;
+
+                if ($isCorrelation) {
+                    $correlationUsed = true;
+                }
+
+                $insert->execute([
+                    'i'      => $integrationId,
+                    'k'      => $sourceKind,
+                    'tk'     => $row['target_kind'],
+                    'key'    => $row['target_key'],
+                    'src'    => $row['source_field'] === '' ? null : $row['source_field'],
+                    'const'  => $row['constant_value'] === '' ? null : $row['constant_value'],
+                    // Kljuc spajanja se po definiciji upisuje samo pri
+                    // kreiranju: instance_uuid se ne menja, a prepisivanje bi
+                    // znacilo da vise nije kljuc.
+                    'policy' => $isCorrelation ? 'create_only' : $row['write_policy'],
+                    'corr'   => $isCorrelation ? 1 : 0,
+                ]);
+            }
+
+            $this->pdo->commit();
+        } catch (\Throwable $e) {
+            $this->pdo->rollBack();
+
+            throw $e;
+        }
+    }
+
     // -----------------------------------------------------------------
     // Mapiranje
     // -----------------------------------------------------------------
