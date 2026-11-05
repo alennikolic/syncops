@@ -5,10 +5,10 @@
 /** @var list<\SyncOps\Integration\Integration> $integrations */
 /** @var string $csrf */
 
-// Kratke oznake dijalekata dolaze iz IntegrationType, po tipu integracije —
-// ovde se vise ne drzi sopstveni spisak koji ume da zaostane za pravim.
-// Nepoznat dijalekt se vraca onakav kakav stoji u bazi, pa stariji red ne
-// obori ekran.
+// Kratka oznaka dijalekta dolazi iz IntegrationType, po tipu integracije.
+// Za vCenter je to uvek /sdk, pa kolona pokazuje verziju vCentera — ona
+// jeste podatak — a dijalekt stoji sitnije ispod. Nepoznat dijalekt se vraca
+// onakav kakav stoji u bazi, pa stariji red ne obori ekran.
 $flavor = static fn (\SyncOps\Integration\Integration $i, ?string $f): string
     => \SyncOps\Integration\IntegrationType::flavorLabel($i->type, $f);
 ?>
@@ -37,7 +37,7 @@ $flavor = static fn (\SyncOps\Integration\Integration $i, ?string $f): string
                     <th>Naziv</th>
                     <th>Adresa</th>
                     <th>Servisni nalog</th>
-                    <th>API</th>
+                    <th>vCenter</th>
                     <th>Provera konekcije</th>
                     <th></th>
                 </tr>
@@ -57,13 +57,11 @@ $flavor = static fn (\SyncOps\Integration\Integration $i, ?string $f): string
                     </td>
                     <td class="data"><?= $e($i->baseUrl()) ?></td>
                     <td class="data"><?= $e($i->username) ?></td>
-                    <td>
-                        <?= $e($flavor($i, $i->apiFlavor)) ?>
-                        <?php if ($i->apiFlavor === 'auto' && $i->apiFlavorDetected !== null): ?>
-                            <div class="data muted"><?= $e($flavor($i, $i->apiFlavorDetected)) ?><?php
-                                if ($i->productVersion !== null) { echo ' ' . $e($i->productVersion); }
-                            ?></div>
-                        <?php endif; ?>
+                    <td class="stacked">
+                        <?= $i->productVersion === null
+                            ? '<span class="muted">nepoznata verzija</span>'
+                            : '<span class="data">' . $e($i->productVersion) . '</span>' ?>
+                        <span class="sub data muted"><?= $e($flavor($i, $i->apiFlavor)) ?></span>
                     </td>
                     <td>
                         <?php if ($i->lastTestedAt === null): ?>
