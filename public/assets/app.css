@@ -725,3 +725,40 @@ pre.raw-full {
     word-break: break-word;
     color: var(--ink);
 }
+
+/* Vise dugmadi u zaglavlju stranice: jedno po tipu integracije. */
+.head-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---------------------------------------------------------------------
+ * AssetOPS referentni spiskovi
+ * ------------------------------------------------------------------ */
+
+/* Uvlacenje po dubini stabla. Razmak a ne crtica: struktura se vidi iz
+   poravnanja, pa dodatni znakovi samo prave buku u koloni imena. */
+.tree-indent {
+    display: inline-block;
+    width: 18px;
+    border-left: 1px solid var(--line);
+    margin-left: 4px;
+    height: 1em;
+    vertical-align: -2px;
+}
+
+/* Boja statusa dolazi iz AssetOPS-a i prikazuje se kao uzorak, ne kao
+   pozadina celog reda — u ovom GUI-ju boja reda znaci stanje objekta. */
+.swatch {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border-radius: 3px;
+    border: 1px solid var(--line);
+    vertical-align: -2px;
+    margin-right: 6px;
+}
+
+.check {
+    display: block;
+    font-weight: 400;
+    padding: 2px 0;
+    cursor: pointer;
+}
+.check input { margin-right: 6px; }
