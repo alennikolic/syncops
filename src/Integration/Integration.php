@@ -14,10 +14,9 @@ namespace SyncOps\Integration;
 
 final class Integration
 {
-    public const FLAVOR_AUTO        = 'auto';
-    public const FLAVOR_REST_LEGACY = 'rest_legacy';   // /rest    (6.7 - 7.0)
-    public const FLAVOR_API_V2      = 'api_v2';        // /api     (7.0U2+)
-    public const FLAVOR_SOAP        = 'soap';          // /sdk     (vim25, sve verzije)
+    // vCenter se cita iskljucivo preko vim25 (/sdk). REST dijalekti su
+    // uklonjeni u migraciji 0010; stare vrednosti su tada prevedene na soap.
+    public const FLAVOR_SOAP = 'soap';          // /sdk  (vim25, sve verzije)
 
     public function __construct(
         public readonly int $id,
@@ -78,26 +77,16 @@ final class Integration
     }
 
     /**
-     * Govori li ova integracija SOAP-om, umesto REST-om.
-     */
-    public function usesSoap(): bool
-    {
-        return $this->effectiveFlavor() === self::FLAVOR_SOAP;
-    }
-
-    /**
-     * Dijalekt koji treba stvarno koristiti: rucno podesen ako nije "auto",
-     * inace poslednji detektovani. NULL znaci da detekcija jos nije radjena.
+     * Dijalekt kojim se ova integracija cita.
      *
-     * "auto" se odnosi samo na REST dijalekte — SOAP se bira svesno, jer nije
-     * stvar verzije vCentera nego odluke kako se prikuplja.
+     * Ranije je ovde zivela logika za "auto": ako je dijalekt bio nepoznat,
+     * uzimala se poslednja detektovana vrednost. Sa jednim protokolom biranja
+     * vise nema, pa metoda ostaje samo kao citljivo ime za kolonu — i kao
+     * mesto na kom ce se, kada stignu drugi izvori, njihovi dijalekti
+     * razlikovati.
      */
-    public function effectiveFlavor(): ?string
+    public function effectiveFlavor(): string
     {
-        if ($this->apiFlavor !== self::FLAVOR_AUTO) {
-            return $this->apiFlavor;
-        }
-
-        return $this->apiFlavorDetected;
+        return $this->apiFlavor;
     }
 }
