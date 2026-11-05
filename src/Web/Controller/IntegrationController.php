@@ -11,9 +11,9 @@ namespace SyncOps\Web\Controller;
 use SyncOps\Integration\Integration;
 use SyncOps\Integration\IntegrationRepository;
 use SyncOps\Integration\IntegrationType;
+use SyncOps\Source\SourceTester;
 use SyncOps\Run\DiscoveryRunner;
 use SyncOps\Run\RunStatus;
-use SyncOps\Source\VCenter\ConnectionTester;
 use SyncOps\Web\Auth;
 use SyncOps\Web\Flash;
 use SyncOps\Web\View;
@@ -21,17 +21,17 @@ use Throwable;
 
 final class IntegrationController
 {
-    // Dijalekti vise ne stoje ovde nego u IntegrationType, po tipu
-    // integracije. U ovoj fazi se dodaje samo vCenter, pa forma radi sa
-    // njegovim vokabularom; kada stignu drugi izvori, tip ce birati korisnik.
-    private const TYPE = IntegrationType::VCENTER;
-
+    /**
+     * @param array<string, SourceTester> $testers Provera konekcije po tipu
+     *        integracije. Mapa a ne grananje: nov tip se dodaje jednim
+     *        unosom pri sastavljanju, bez diranja ovog kontrolera.
+     */
     public function __construct(
         private readonly IntegrationRepository $repo,
         private readonly View $view,
         private readonly Auth $auth,
         private readonly Flash $flash,
-        private readonly ConnectionTester $tester,
+        private readonly array $testers,
         private readonly DiscoveryRunner $runner,
     ) {
     }
@@ -48,9 +48,20 @@ final class IntegrationController
         ]);
     }
 
-    public function createForm(): void
+    /**
+     * Forma za nov zapis. Tip stize iz putanje, jer se vCenter i AssetOPS
+     * ne unose istim poljima.
+     */
+    public function createForm(string $type = IntegrationType::VCENTER): void
     {
-        $this->form(null, [], []);
+        if (!IntegrationType::exists($type)) {
+            $this->flash->error('Nepoznat tip integracije.');
+            header('Location: /integrations');
+
+            return;
+        }
+
+        $this->form(null, ['type' => $type], []);
     }
 
     public function editForm(string $id): void
@@ -93,6 +104,7 @@ final class IntegrationController
                 username:   $input['username'],
                 password:   $input['password'],
                 port:       (int) $input['port'],
+                type:       $input['type'],
                 apiFlavor:  $input['api_flavor'],
                 verifyPeer: $input['verify_peer'] === '1',
             );
@@ -102,7 +114,9 @@ final class IntegrationController
             return;
         }
 
-        $this->flash->success("Integracija „{$input['name']}” je dodata. Proveri konekciju da bi se prepoznala verzija API-ja.");
+        $this->flash->success(
+            "Integracija „{$input['name']}” je dodata. Proveri konekciju pre prvog posla."
+        );
         header('Location: /integrations');
         unset($id);
     }
@@ -142,6 +156,7 @@ final class IntegrationController
                 username:   $input['username'],
                 apiFlavor:  $input['api_flavor'],
                 verifyPeer: $input['verify_peer'] === '1',
+                type:       $integration->type,
             );
 
             // Prazno polje znaci "ostavi postojecu lozinku".
@@ -180,7 +195,19 @@ final class IntegrationController
             return;
         }
 
-        $result = $this->tester->test($integration);
+        $tester = $this->testers[$integration->type] ?? null;
+
+        if ($tester === null) {
+            $this->flash->error(sprintf(
+                'Za tip „%s” nije podešena provera konekcije.',
+                IntegrationType::label($integration->type)
+            ));
+            header('Location: /integrations');
+
+            return;
+        }
+
+        $result = $tester->test($integration);
 
         if ($result->ok) {
             $this->flash->success(sprintf(
@@ -226,6 +253,18 @@ final class IntegrationController
 
         if (!$integration->isActive) {
             $this->flash->error("Integracija „{$integration->name}” je isključena. Uključi je pa pokušaj ponovo.");
+            header('Location: /integrations');
+
+            return;
+        }
+
+        // Prikupljanje za sada postoji samo za vCenter. AssetOPS se cita u
+        // sloju sinhronizacije, koji jos nije napravljen.
+        if ($integration->type !== IntegrationType::VCENTER) {
+            $this->flash->error(sprintf(
+                'Prikupljanje za „%s” još ne postoji.',
+                IntegrationType::label($integration->type)
+            ));
             header('Location: /integrations');
 
             return;
@@ -283,14 +322,18 @@ final class IntegrationController
      */
     private function form(?Integration $integration, array $input, array $errors): void
     {
+        $type = $integration?->type ?? ($input['type'] ?? IntegrationType::VCENTER);
+
         $this->view->render('integration/form', [
             'title'       => $integration === null ? 'Nova integracija' : 'Izmena integracije',
             'nav'         => 'integrations',
             'integration' => $integration,
-            'flavors'     => IntegrationType::flavors($integration?->type ?? self::TYPE),
+            'type'        => $type,
+            'spec'        => IntegrationType::form($type),
+            'flavors'     => IntegrationType::flavors($type),
             'errors'      => $errors,
             'csrf'        => $this->auth->csrfToken(),
-            'value'       => $this->values($integration, $input),
+            'value'       => $this->values($integration, $input, $type),
         ]);
     }
 
@@ -301,15 +344,18 @@ final class IntegrationController
      * @param array<string, string> $input
      * @return array<string, string>
      */
-    private function values(?Integration $integration, array $input): array
+    private function values(?Integration $integration, array $input, string $type): array
     {
+        $spec = IntegrationType::form($type);
+
         return [
+            'type'        => $type,
             'name'        => $input['name']        ?? $integration?->name       ?? '',
             'hostname'    => $input['hostname']    ?? $integration?->hostname   ?? '',
-            'port'        => $input['port']        ?? (string) ($integration?->port ?? 443),
+            'port'        => $input['port']        ?? (string) ($integration?->port ?? $spec['default_port']),
             'username'    => $input['username']    ?? $integration?->username   ?? '',
             'api_flavor'  => $input['api_flavor']  ?? $integration?->apiFlavor
-                                                   ?? IntegrationType::defaultFlavor(self::TYPE),
+                                                   ?? IntegrationType::defaultFlavor($type),
             'verify_peer' => $input['verify_peer'] ?? (($integration?->verifyPeer ?? false) ? '1' : '0'),
         ];
     }
@@ -319,13 +365,22 @@ final class IntegrationController
      */
     private function input(): array
     {
+        $type = (string) ($_POST['type'] ?? IntegrationType::VCENTER);
+
+        if (!IntegrationType::exists($type)) {
+            $type = IntegrationType::VCENTER;
+        }
+
         return [
+            'type'        => $type,
             'name'        => trim((string) ($_POST['name'] ?? '')),
             'hostname'    => trim((string) ($_POST['hostname'] ?? '')),
             'port'        => trim((string) ($_POST['port'] ?? '443')),
             'username'    => trim((string) ($_POST['username'] ?? '')),
-            'password'    => (string) ($_POST['password'] ?? ''),
-            'api_flavor'  => (string) ($_POST['api_flavor'] ?? IntegrationType::defaultFlavor(self::TYPE)),
+            // Kljuc se ne trimuje slepo: vodeci razmak je greska pri lepljenju,
+            // ali razmak unutra moze da bude deo tajne. Skidaju se samo krajevi.
+            'password'    => trim((string) ($_POST['password'] ?? ''), " \t\n\r\0\x0B"),
+            'api_flavor'  => (string) ($_POST['api_flavor'] ?? IntegrationType::defaultFlavor($type)),
             'verify_peer' => ($_POST['verify_peer'] ?? '') === '1' ? '1' : '0',
         ];
     }
@@ -337,9 +392,12 @@ final class IntegrationController
     private function validate(array $input, bool $requirePassword): array
     {
         $errors = [];
+        $type   = $input['type'];
+        $spec   = IntegrationType::form($type);
+        $noun   = $spec['noun'];
 
         if ($input['hostname'] === '') {
-            $errors[] = 'Unesi adresu vCentera.';
+            $errors[] = "Unesi adresu — gde se nalazi {$noun}.";
         } elseif (
             filter_var($input['hostname'], FILTER_VALIDATE_IP) === false
             && filter_var($input['hostname'], FILTER_VALIDATE_DOMAIN, FILTER_FLAG_HOSTNAME) === false
@@ -348,7 +406,7 @@ final class IntegrationController
         }
 
         if ($input['name'] === '') {
-            $errors[] = 'Unesi naziv po kojem ćeš prepoznati ovaj vCenter.';
+            $errors[] = "Unesi naziv po kojem ćeš prepoznati ovaj {$noun}.";
         }
 
         $port = (int) $input['port'];
@@ -357,17 +415,30 @@ final class IntegrationController
             $errors[] = 'Port mora biti broj između 1 i 65535.';
         }
 
-        if ($input['username'] === '') {
+        // AssetOPS nema korisnicko ime — ceo kredencijal je API kljuc.
+        if ($spec['has_username'] === true && $input['username'] === '') {
             $errors[] = 'Unesi korisničko ime servisnog naloga.';
         }
 
         if ($requirePassword && $input['password'] === '') {
-            $errors[] = 'Unesi lozinku servisnog naloga.';
+            $errors[] = "Unesi {$spec['secret_label']}.";
         }
 
-        // Provera je sada vezana za tip: ne pita samo da li dijalekt postoji,
-        // nego da li vazi za ovu vrstu integracije.
-        if (!IntegrationType::isValidFlavor(self::TYPE, $input['api_flavor'])) {
+        // JWT token u polju za API kljuc: lako se pomesaju, a poruka koju
+        // server tada vrati zvuci kao da je kljuc istekao. Bolje da se kaze
+        // odmah nego posle neuspele provere konekcije.
+        if (
+            $type === IntegrationType::ASSETOPS
+            && $input['password'] !== ''
+            && str_starts_with($input['password'], 'eyJ')
+        ) {
+            $errors[] = 'Ovo izgleda kao JWT token, ne kao API ključ. '
+                      . 'Ključ ima oblik prefiks.tajna i dobija se na /api/current-user/own-api-keys/.';
+        }
+
+        // Provera je vezana za tip: ne pita samo da li dijalekt postoji, nego
+        // i da li vazi za ovu vrstu integracije.
+        if (!IntegrationType::isValidFlavor($type, $input['api_flavor'])) {
             $errors[] = 'Izaberi protokol sa liste.';
         }
 
