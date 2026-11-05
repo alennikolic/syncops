@@ -3,12 +3,13 @@
 //
 // Meri kako se AssetOPS ponasa pri upisu.
 //
-// Postoji zato sto tri stvari koje odredjuju ceo sloj sinhronizacije nisu
-// potvrdjene merenjem, nego su do sada bile citanje swagger-a:
+// Postoji zato sto stvari koje odredjuju ceo sloj sinhronizacije ne mogu da
+// se procitaju iz swagger-a, nego samo da se izmere:
 //
-//   1. Da li je PUT pun ili parcijalan. Ako brise izostavljena polja, onda
-//      izmena jednog polja trazi slanje CELOG zapisa — i odgovornost za sva
-//      polja koja se ne zele dirati. PATCH na samom zapisu ne postoji.
+//   1. Dokle PUT brise izostavljeno. Izmereno na demo instanci: nativna
+//      polja i veze prezivljavaju izostavljanje, a attribute_values se
+//      brise u celini. PATCH na samom zapisu ne postoji. Zato merenje
+//      gleda nativna polja i EAV atribute odvojeno.
 //
 //   2. Da li se attribute_values stvarno upisuje. Server ne odbija telo sa
 //      atributima, ali odgovor na POST ne prikazuje atribute, pa iz njega
@@ -17,6 +18,8 @@
 //
 //   3. Da li server menja primljenu vrednost. Ako skrati ili preoblikuje,
 //      sledece citanje vidi razliku i program upisuje opet, u nedogled.
+//      Izmereno: nativna polja se trimuju, EAV vrednosti ne — pa se i ovo
+//      meri odvojeno.
 //
 // Merenje je destruktivno samo po sebi: pravi privremeni CI i brise ga.
 // Brisanje ide kroz finally, pa zapis ne ostaje ni kada merenje pukne.
@@ -66,7 +69,7 @@ final class WriteProbe
                 return $this->result($findings, $notes, null, false, ok: false);
             }
 
-            [$location, $group, $attribute] = $ready;
+            [$location, $group, $type, $attribute] = $ready;
 
             $name = self::NAME_PREFIX . gmdate('Ymd-His');
 
@@ -74,11 +77,12 @@ final class WriteProbe
             // 1. Kreiranje
             // -------------------------------------------------------------
             $body = [
-                'name'              => $name,
-                'location'          => $location,
-                'visibility_groups' => [$group],
-                'description'       => 'Privremeni zapis koji je napravio SyncOPS radi merenja ponasanja upisa.',
-                'serial_number'     => self::MESSY_VALUE,
+                'name'               => $name,
+                'location'           => $location,
+                'visibility_groups'  => [$group],
+                'virtual_asset_type' => $type,
+                'description'        => 'Privremeni zapis koji je napravio SyncOPS radi merenja ponasanja upisa.',
+                'serial_number'      => self::MESSY_VALUE,
             ];
 
             if ($attribute !== null) {
@@ -142,11 +146,24 @@ final class WriteProbe
             $serial = $after['serial_number'] ?? null;
 
             $findings[] = $this->finding(
-                'normalization',
-                'Server vraća vrednost nepromenjenu',
+                'normalization_native',
+                'Nativno polje se vraća nepromenjeno',
                 'poslato ' . $this->show(self::MESSY_VALUE) . ', vraćeno ' . $this->show($serial),
                 $serial === self::MESSY_VALUE ? 'ok' : 'pazi'
             );
+
+            // EAV i nativna polja se ne ponasaju isto, pa se mere odvojeno:
+            // izmereno je da se nativna trimuju a EAV vrednosti ne.
+            if ($attribute !== null) {
+                $eav = $this->attributeValue($after, $attribute);
+
+                $findings[] = $this->finding(
+                    'normalization_eav',
+                    'EAV vrednost se vraća nepromenjena',
+                    'poslato ' . $this->show(self::MESSY_VALUE) . ', vraćeno ' . $this->show($eav),
+                    $eav === self::MESSY_VALUE ? 'ok' : 'pazi'
+                );
+            }
 
             // -------------------------------------------------------------
             // 4. Pun ili parcijalan PUT
@@ -155,8 +172,9 @@ final class WriteProbe
             // kao obaveznu. Ako posle toga opis i serijski broj nestanu, PUT
             // je pun i brise izostavljeno.
             $this->client->raw($path, 'PUT', [
-                'name'     => $name . '-izmenjeno',
-                'location' => $location,
+                'name'               => $name . '-izmenjeno',
+                'location'           => $location,
+                'virtual_asset_type' => $type,
             ]);
 
             $afterPut = $this->readRecord($path);
@@ -192,19 +210,41 @@ final class WriteProbe
                 }
             }
 
+            // PUT se ne ponasa isto prema svim poljima, pa se ishod ne svodi
+            // na "pun ili parcijalan". Izmereno: nativna polja i veze
+            // prezivljavaju izostavljanje, a attribute_values se BRISE.
+            $eavLost = array_filter($lost, static fn (string $f): bool => str_starts_with($f, 'attribute_values.'));
+            $nativeLost = array_values(array_diff($lost, $eavLost));
+
             $findings[] = $this->finding(
-                'put_mode',
-                'PUT je parcijalan (izostavljena polja preživljavaju)',
-                $lost === []
-                    ? 'sačuvano: ' . (implode(', ', $kept) ?: '—')
-                    : 'izgubljeno: ' . implode(', ', $lost)
-                      . ($kept === [] ? '' : '; sačuvano: ' . implode(', ', $kept)),
-                $lost === [] ? 'ok' : 'lose'
+                'put_native',
+                'PUT čuva nativna polja koja nisu poslata',
+                $nativeLost === []
+                    ? 'sačuvano: ' . (implode(', ', array_diff($kept, $eavLost)) ?: '—')
+                    : 'izgubljeno: ' . implode(', ', $nativeLost),
+                $nativeLost === [] ? 'ok' : 'lose'
             );
 
-            if ($lost !== []) {
-                $notes[] = 'PUT je pun: izmena jednog polja mora da posalje ceo zapis, '
-                         . 'pa sinhronizacija preuzima odgovornost i za polja koja ne zeli da dira.';
+            if ($attribute !== null) {
+                $findings[] = $this->finding(
+                    'put_eav',
+                    'PUT čuva EAV atribute koji nisu poslati',
+                    $eavLost === []
+                        ? 'sačuvano: attribute_values.' . $attribute
+                        : 'OBRISANO: ' . implode(', ', $eavLost),
+                    $eavLost === [] ? 'ok' : 'lose'
+                );
+            }
+
+            if ($nativeLost !== []) {
+                $notes[] = 'PUT brise izostavljena nativna polja: izmena jednog polja mora da '
+                         . 'posalje ceo zapis.';
+            }
+
+            if ($eavLost !== []) {
+                $notes[] = 'PUT brise SVE EAV atribute koji nisu poslati. Svaki upis zato mora da '
+                         . 'nosi kompletnu mapu attribute_values — inace nestaje kljuc spajanja, a '
+                         . 'sa njim i veza sa tim objektom.';
             }
 
             $findings[] = $this->finding(
@@ -229,15 +269,16 @@ final class WriteProbe
     // -----------------------------------------------------------------
 
     /**
-     * Lokacija, visibility grupa i EAV atribut bez kojih merenje ne moze.
+     * Lokacija, visibility grupa, tip i EAV atribut bez kojih merenje ne moze.
      *
      * @param list<string> $notes
-     * @return array{0: string, 1: string, 2: ?string}|null
+     * @return array{0: string, 1: string, 2: string, 3: ?string}|null
      */
     private function prerequisites(array &$notes): ?array
     {
         $location = $this->firstSlug('/api/locations/');
         $group    = $this->firstSlug('/api/visibility-groups/');
+        $type     = $this->firstSlug('/api/virtual-asset-types/');
 
         if ($location === null) {
             $notes[] = 'Nema nijedne lokacije — CreateVirtualAsset je trazi kao obaveznu.';
@@ -247,11 +288,18 @@ final class WriteProbe
             $notes[] = 'Nema nijedne visibility grupe — CreateVirtualAsset je trazi kao obaveznu.';
         }
 
-        if ($location === null || $group === null) {
+        // Sema ga navodi kao neobavezan, ali izmereno: bez njega server ne
+        // vrati 422 nego pukne sa HTTP 500. Zato se uvek salje.
+        if ($type === null) {
+            $notes[] = 'Nema nijednog tipa virtuelne masine. Bez njega kreiranje pada sa HTTP 500 '
+                     . '— sema ga navodi kao neobavezan, ali server ga zahteva.';
+        }
+
+        if ($location === null || $group === null || $type === null) {
             return null;
         }
 
-        return [$location, $group, $this->firstAttributeFor('virtual-asset')];
+        return [$location, $group, $type, $this->firstAttributeFor('virtual-asset')];
     }
 
     private function firstSlug(string $path): ?string
