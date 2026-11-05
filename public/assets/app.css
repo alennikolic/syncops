@@ -99,7 +99,8 @@ a:hover { text-decoration: underline; }
 .nav { display: flex; flex-direction: column; gap: 1px; }
 
 .nav a {
-    padding: 7px 20px;
+    /* Uvuceno dublje od naslova grupe, da se vidi sta pod sta spada. */
+    padding: 7px 20px 7px 28px;
     color: var(--ink-soft);
     border-left: var(--rail) solid transparent;
     font-size: 14px;
@@ -219,13 +220,28 @@ td.rail-idle { border-left-color: var(--idle); }
 /* Grupe u navigaciji                                                   */
 /* ------------------------------------------------------------------ */
 
+/* Naslov grupe u navigaciji.
+ *
+ * Razlikuje se od stavki na tri nacina, i nijedan nije boja: linija iznad
+ * koju stavke nemaju, puna boja teksta naspram prigusene, i manje slovo uz
+ * vecu tezinu. Boja je namerno izostavljena — u ovom GUI-ju indigo znaci
+ * "moze da se klikne", a naslov grupe ne moze.
+ *
+ * Nije verzalom: tracked-out velika slova su najcesci nacin da se ovo uradi
+ * i upravo zato ne govore nista o ovom konkretnom meniju. */
 .nav-group {
-    padding: 14px 20px 3px;
-    font-size: 12px;
-    font-weight: 600;
-    color: var(--ink-soft);
-    opacity: 0.75;
+    margin-top: 10px;
+    padding: 12px 20px 5px;
+    border-top: 1px solid var(--line);
+    font-size: 11.5px;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+    color: var(--ink);
 }
+
+/* Prva grupa stoji odmah ispod "Pregled", pa joj linija sluzi kao razdvajanje
+   i razmak iznad nije potreban. */
+.nav-group:first-of-type { margin-top: 6px; }
 
 /* ------------------------------------------------------------------ */
 /* Filteri iznad tabele                                                 */
@@ -553,11 +569,15 @@ select {
         padding: 10px 16px;
     }
     .nav-group {
+        margin-top: 0;
         padding: 6px 8px 6px 14px;
         align-self: center;
         white-space: nowrap;
+        /* U vodoravnom meniju razdvaja linija sa strane, ne odozgo. */
+        border-top: 0;
         border-left: 1px solid var(--line);
     }
+    .nav-group:first-of-type { margin-top: 0; }
     .main { padding: 20px 16px 40px; }
     .form-grid { grid-template-columns: 1fr; }
     .panel { overflow-x: auto; }
