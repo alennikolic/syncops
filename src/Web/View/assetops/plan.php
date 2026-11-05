@@ -302,7 +302,22 @@ $show = static function (mixed $value) use ($e): string {
                                 <span class="sub data muted">HTTP <?= $e($entry['http_status']) ?></span>
                             <?php endif; ?>
                         </td>
-                        <td><?= $e($entry['message'] ?? '—') ?></td>
+                        <td>
+                            <?= $e($entry['message'] ?? '—') ?>
+
+                            <?php if ($entry['status'] === 'failed' && ($entry['payload'] ?? null) !== null): ?>
+                                <?php // Kod neuspeha poruka servera cesto ne kaze dovoljno.
+                                      // Poslato telo je jedino mesto na kom se vidi sta je
+                                      // tacno otislo — i obicno odmah pokaze sta fali. ?>
+                                <details class="ref-list">
+                                    <summary>Poslato telo</summary>
+                                    <pre class="raw-full"><?= $e(json_encode(
+                                        json_decode((string) $entry['payload'], true),
+                                        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+                                    )) ?></pre>
+                                </details>
+                            <?php endif; ?>
+                        </td>
                     </tr>
                 <?php endforeach; ?>
                 </tbody>
