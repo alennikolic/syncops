@@ -4,7 +4,7 @@
 /** @var callable $e */
 /** @var \SyncOps\Integration\Integration|null $integration */
 /** @var array<string, string> $value */
-/** @var array<string, string> $flavors */
+/** @var array<string, array<string, string>> $flavors Grupa => dijalekt => opis */
 /** @var list<string> $errors */
 /** @var string $csrf */
 
@@ -78,14 +78,20 @@ $action = $isNew ? '/integrations' : '/integrations/' . $integration->id;
         <div class="field">
             <label for="api_flavor">Protokol</label>
             <span class="hint">
-                Između REST dijalekata ostavi „prepoznaj sam” — razlika je u verziji vCentera.
-                SOAP se bira svesno: nije stvar verzije nego načina prikupljanja.
+                REST je jednostavniji i dovoljan za većinu posla. SOAP vraća ceo inventar
+                u jednom pozivu, i jedini daje VM templejte i hardver hostova.
+                Koji REST dijalekt vCenter govori zavisi od njegove verzije i prepoznaje se
+                sam — ručno se bira samo ako detekcija zakaže.
             </span>
             <select id="api_flavor" name="api_flavor">
-                <?php foreach ($flavors as $key => $label): ?>
-                    <option value="<?= $e($key) ?>" <?= $value['api_flavor'] === $key ? 'selected' : '' ?>>
-                        <?= $e($label) ?>
-                    </option>
+                <?php foreach ($flavors as $group => $options): ?>
+                    <optgroup label="<?= $e($group) ?>">
+                        <?php foreach ($options as $key => $label): ?>
+                            <option value="<?= $e($key) ?>" <?= $value['api_flavor'] === $key ? 'selected' : '' ?>>
+                                <?= $e($label) ?>
+                            </option>
+                        <?php endforeach; ?>
+                    </optgroup>
                 <?php endforeach; ?>
             </select>
         </div>
