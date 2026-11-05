@@ -39,6 +39,7 @@ $nav = $nav ?? '';
             <div class="nav-group">Podešavanje</div>
             <a href="/runs"         <?= $nav === 'runs'         ? 'aria-current="page"' : '' ?>>Prikupljanja</a>
             <a href="/integrations" <?= $nav === 'integrations' ? 'aria-current="page"' : '' ?>>Integracije</a>
+            <a href="/db"           <?= $nav === 'database'     ? 'aria-current="page"' : '' ?>>Baza</a>
         </div>
 
         <div class="sidebar-foot">
