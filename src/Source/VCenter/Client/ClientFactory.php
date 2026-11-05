@@ -3,9 +3,16 @@
 //
 // Sastavlja klijenta za jednu integraciju.
 //
-// Ako je dijalekt "auto", pokusava /api pa /rest i vraca onaj koji je uspeo —
-// zajedno sa oznakom dijalekta, da pozivalac moze da je upise u bazu i sledeci
-// put ide pravo na pravi.
+// Od uklanjanja REST-a ovde nema sta da se bira: svaki vCenter se cita preko
+// vSphere Web Services API-ja (vim25, /sdk). Fabrika ipak ostaje, iz dva
+// razloga: transport se u testu podmece preko soapTransport(), a kada stignu
+// drugi izvori podataka, ovde ce biti mesto gde se bira njihov klijent.
+//
+// Zasto je REST uklonjen: vim25 je pun API, REST njegov podskup. REST ne
+// vraca VM templejte, nema hardver hostova, trazi poziv po masini za
+// instance_uuid i jos jedan za podatke iz gosta, postoji tek od 7.0U2 i ima
+// ogranicenje od 4000 objekata. Mereno na istom inventaru od 156 masina:
+// REST 255 poziva i 10 sekundi, SOAP 18 poziva i 0,7 sekundi.
 
 declare(strict_types=1);
 
@@ -13,77 +20,49 @@ namespace SyncOps\Source\VCenter\Client;
 
 use SensitiveParameter;
 use SyncOps\Integration\Integration;
-use SyncOps\Source\VCenter\Client\Soap\SoapHardwareClient;
 use SyncOps\Source\VCenter\Client\Soap\SoapTransport;
 use SyncOps\Source\VCenter\Client\Soap\Vim25Client;
-use SyncOps\Source\VCenter\VCenterException;
 
 class ClientFactory
 {
     public function __construct(
         private readonly int $timeout = 30,
-        /** Da li uz REST ide i SOAP, za hardverske podatke o hostovima. */
-        private readonly bool $withHardware = true,
     ) {
     }
 
     /**
-     * Klijent za zadati dijalekt, bez prijave.
+     * Klijent za zadatu integraciju, bez prijave.
      */
     public function make(
         Integration $integration,
         #[SensitiveParameter] string $password,
-        string $flavor,
     ): ClientInterface {
-        // SOAP je samostalan dijalekt: Vim25Client sve cita sam, pa se ne
-        // umotava u HardwareAwareClient niti mu treba HTTP transport za REST.
-        if ($flavor === Integration::FLAVOR_SOAP) {
-            return new Vim25Client(
-                $this->soapTransport($integration),
-                $integration->username,
-                $password,
-            );
-        }
-
-        $transport = $this->transport($integration);
-
-        $rest = match ($flavor) {
-            Integration::FLAVOR_API_V2 => new RestClient($transport, $integration->username, $password),
-            Integration::FLAVOR_REST_LEGACY => new RestLegacyClient($transport, $integration->username, $password),
-            default => throw new VCenterException("Nepoznat dijalekt API-ja: {$flavor}"),
-        };
-
-        if (!$this->withHardware) {
-            return $rest;
-        }
-
-        return new HardwareAwareClient($rest, new SoapHardwareClient(
+        return new Vim25Client(
             $this->soapTransport($integration),
             $integration->username,
             $password,
-        ));
+        );
+    }
+
+    /**
+     * Prijavljen klijent, spreman za rad.
+     */
+    public function connect(
+        Integration $integration,
+        #[SensitiveParameter] string $password,
+    ): ClientInterface {
+        $client = $this->make($integration, $password);
+        $client->login();
+
+        return $client;
     }
 
     /**
      * Transport za jednu integraciju.
      *
      * Izdvojeno u zasebnu metodu da bi se fabrika mogla testirati: test
-     * podmetne transport ka laznom serveru, a sva logika izbora dijalekta
-     * ostaje ista.
-     */
-    protected function transport(Integration $integration): HttpTransport
-    {
-        return new HttpTransport(
-            baseUrl: $integration->baseUrl(),
-            verifyPeer: $integration->verifyPeer,
-            host: $integration->hostname,
-            timeout: $this->timeout,
-        );
-    }
-
-    /**
-     * SOAP transport za istu integraciju. Izdvojeno zbog testiranja, isto kao
-     * i transport().
+     * podmetne transport koji vraca snimljen odgovor umesto da zove vCenter.
+     * Zato klasa nije final.
      */
     protected function soapTransport(Integration $integration): SoapTransport
     {
@@ -93,55 +72,6 @@ class ClientFactory
             host: $integration->hostname,
             // Jedan RetrievePropertiesEx nad velikim inventarom ume da potraje.
             timeout: max(120, $this->timeout),
-        );
-    }
-
-    /**
-     * Prijavljen klijent, spreman za rad.
-     *
-     * Kada je dijalekt "auto", proba se /api pa /rest. Prva uspesna prijava
-     * pobedjuje. Pogresni kredencijali prekidaju odmah — nema smisla probati
-     * drugi dijalekt sa istom lozinkom.
-     */
-    public function connect(
-        Integration $integration,
-        #[SensitiveParameter] string $password,
-    ): ClientInterface {
-        $explicit = $integration->apiFlavor;
-
-        if ($explicit !== Integration::FLAVOR_AUTO) {
-            $client = $this->make($integration, $password, $explicit);
-            $client->login();
-
-            return $client;
-        }
-
-        // Redosled nije slucajan: /api je sadasnjost, /rest je deprecated.
-        $candidates = [Integration::FLAVOR_API_V2, Integration::FLAVOR_REST_LEGACY];
-        $lastError  = null;
-
-        foreach ($candidates as $flavor) {
-            $client = $this->make($integration, $password, $flavor);
-
-            try {
-                $client->login();
-
-                return $client;
-            } catch (VCenterException $e) {
-                // Lose lozinke nema smisla probati dvaput.
-                if ($e->httpStatus === 401) {
-                    throw $e;
-                }
-
-                $lastError = $e;
-            }
-        }
-
-        throw new VCenterException(
-            'Nijedan dijalekt API-ja nije prihvatio prijavu. Poslednja greska: '
-            . ($lastError?->getMessage() ?? 'nepoznata'),
-            $lastError?->httpStatus,
-            $lastError
         );
     }
 }
