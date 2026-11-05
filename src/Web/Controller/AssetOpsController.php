@@ -39,20 +39,16 @@ final class AssetOpsController
     ) {
     }
 
+    /**
+     * Referentni spiskovi prikupljeni iz AssetOPS-a.
+     */
     public function index(): void
     {
-        $all = $this->assetOpsIntegrations();
+        $selected = $this->selectedOrEmpty('assetops');
 
-        if ($all === []) {
-            $this->view->render('assetops/empty', [
-                'title' => 'AssetOPS',
-                'nav'   => 'assetops',
-            ]);
-
+        if ($selected === null) {
             return;
         }
-
-        $selected = $this->selected($all);
 
         $tables = [];
 
@@ -61,12 +57,36 @@ final class AssetOpsController
         }
 
         $this->view->render('assetops/index', [
-            'title'        => 'AssetOPS',
+            'title'        => 'Referentni podaci',
             'nav'          => 'assetops',
-            'integrations' => $all,
+            'integrations' => $this->assetOpsIntegrations(),
             'integration'  => $selected,
             'tables'       => $tables,
             'lastSeen'     => $this->repo->lastSeenByKind($selected->id),
+            'csrf'         => $this->auth->csrfToken(),
+        ]);
+    }
+
+    /**
+     * Mapiranje: tip CI-ja i tabela polja, po vrsti izvora.
+     *
+     * Zasebna stranica a ne odeljak ispod spiskova — mapiranje se podesava
+     * jednom i onda retko dira, a spiskovi se gledaju. Dve stvari sa
+     * razlicitim ritmom ne treba da dele ekran.
+     */
+    public function mapping(): void
+    {
+        $selected = $this->selectedOrEmpty('assetops-mapping');
+
+        if ($selected === null) {
+            return;
+        }
+
+        $this->view->render('assetops/mapping', [
+            'title'        => 'Mapiranje',
+            'nav'          => 'assetops-mapping',
+            'integrations' => $this->assetOpsIntegrations(),
+            'integration'  => $selected,
             'mapping'      => $this->repo->mapping($selected->id),
             'types'        => [
                 FieldCatalog::KIND_VM   => $this->repo->options($selected->id, 'virtual_asset_type'),
@@ -81,14 +101,30 @@ final class AssetOpsController
                 FieldCatalog::KIND_HOST => FieldCatalog::sourceGroups(FieldCatalog::KIND_HOST),
             ],
             'policies'     => FieldCatalog::POLICIES,
-            'options'      => [
-                'virtual_asset_type' => $this->repo->options($selected->id, 'virtual_asset_type'),
-                'asset_type'         => $this->repo->options($selected->id, 'asset_type'),
-                'location'           => $this->repo->options($selected->id, 'location'),
-                'visibility_group'   => $this->repo->options($selected->id, 'visibility_group'),
-            ],
             'csrf'         => $this->auth->csrfToken(),
         ]);
+    }
+
+    /**
+     * Izabrana AssetOPS integracija, ili prikaz praznog stanja.
+     *
+     * Vraca null kada nema nijedne — pozivalac tada samo izlazi, jer je
+     * stranica vec iscrtana.
+     */
+    private function selectedOrEmpty(string $nav): ?Integration
+    {
+        $all = $this->assetOpsIntegrations();
+
+        if ($all === []) {
+            $this->view->render('assetops/empty', [
+                'title' => 'AssetOPS',
+                'nav'   => $nav,
+            ]);
+
+            return null;
+        }
+
+        return $this->selected($all);
     }
 
     /**
@@ -185,7 +221,7 @@ final class AssetOpsController
         }
 
         $this->flash->success("Mapiranje je sačuvano — {$counted} podešenih polja.");
-        header('Location: /assetops?integration=' . $integration->id);
+        header('Location: /assetops/mapping?integration=' . $integration->id);
     }
 
     /**
