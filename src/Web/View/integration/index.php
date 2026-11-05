@@ -9,6 +9,7 @@ $flavorLabel = [
     'auto'        => 'prepoznaje sam',
     'api_v2'      => '/api',
     'rest_legacy' => '/rest',
+    'soap'        => '/sdk',
 ];
 ?>
 
