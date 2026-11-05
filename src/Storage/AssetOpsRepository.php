@@ -357,10 +357,7 @@ final class AssetOpsRepository
         foreach ($stmt->fetchAll() as $row) {
             $kind = (string) $row['source_kind'];
 
-            $byKind[$kind] = [
-                'type_slug'      => $row['type_slug'],
-                'units_required' => $row['units_required'],
-            ];
+            $byKind[$kind] = ['type_slug' => $row['type_slug']];
         }
 
         return $byKind;
@@ -371,42 +368,36 @@ final class AssetOpsRepository
      */
     private function emptyMapping(): array
     {
-        return [
-            'type_slug'      => null,
-            'units_required' => null,
-        ];
+        return ['type_slug' => null];
     }
 
     /**
-     * Tip CI-ja i broj rek jedinica.
+     * Tip CI-ja koji se pravi od ove vrste izvora.
      *
-     * Lokacija i visibility grupe su od migracije 0014 obicni redovi u
-     * ao_field_map — to su polja kao i ostala, samo im vrednost dolazi iz
-     * prikupljenog spiska umesto iz vCentera. Tip ostaje ovde jer nije
-     * vrednost polja nego odluka koje je VRSTE CI koji se pravi.
+     * Jedino sto je ostalo u ao_mapping. Lokacija i visibility grupe su u
+     * migraciji 0014, a broj rek jedinica u 0015, presli u ao_field_map —
+     * sve troje su polja kao i ostala. Tip nije: on odredjuje koje je VRSTE
+     * CI koji se pravi, pa se bira pre tabele, a ne u njoj.
      */
     public function saveMapping(
         int $integrationId,
         string $sourceKind,
         ?string $typeSlug,
-        ?int $unitsRequired,
     ): void {
         $stmt = $this->pdo->prepare(
             'INSERT INTO ao_mapping
-                (integration_id, source_kind, type_slug, units_required, updated_at)
+                (integration_id, source_kind, type_slug, updated_at)
              VALUES
-                (:integration, :kind, :type, :units, UTC_TIMESTAMP())
+                (:integration, :kind, :type, UTC_TIMESTAMP())
              ON DUPLICATE KEY UPDATE
-                type_slug      = VALUES(type_slug),
-                units_required = VALUES(units_required),
-                updated_at     = UTC_TIMESTAMP()'
+                type_slug  = VALUES(type_slug),
+                updated_at = UTC_TIMESTAMP()'
         );
 
         $stmt->execute([
             'integration' => $integrationId,
             'kind'        => $sourceKind,
             'type'        => ($typeSlug === null || $typeSlug === '') ? null : $typeSlug,
-            'units'       => $unitsRequired,
         ]);
     }
 }
