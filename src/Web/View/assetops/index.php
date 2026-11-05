@@ -197,14 +197,12 @@ $blocks = [
         'opis'   => 'Mašina iz vCentera postaje virtual-asset. Ključ spajanja je po pravilu '
                   . 'instance_uuid — ne menja se pri preimenovanju, vMotion-u ni reinstalaciji gosta.',
         'tipovi' => 'Tip virtuelne mašine',
-        'units'  => false,
     ],
     'host' => [
         'naslov' => 'ESXi hostovi',
         'opis'   => 'Host je fizička oprema, pa postaje asset. Ključ spajanja je hardware_uuid — '
                   . 'ne zavisi od toga kako proizvođač prijavljuje serijski broj.',
         'tipovi' => 'Tip opreme',
-        'units'  => true,
     ],
 ];
 
@@ -226,6 +224,16 @@ $sourceSelect = static function (string $kind, array $row, array $groups) use ($
     }
 
     return $html . '</select>';
+};
+
+/** Rucno upisana vrednost, za polja kojima u vCenteru nema parnjaka. */
+$constantInput = static function (string $kind, array $row) use ($e): string {
+    $value = $row['fixed'][0] ?? '';
+
+    return '<input type="' . ($row['type'] === 'int' ? 'number' : 'text') . '"'
+         . ' name="map[' . $e($kind) . '][' . $e($row['ref']) . '][fixed]"'
+         . ' value="' . $e($value) . '" style="max-width:9rem"'
+         . ($row['type'] === 'int' ? ' min="0" max="1000"' : '') . '>';
 };
 
 /** Fiksna vrednost veze, izabrana iz prikupljenog spiska. */
@@ -289,27 +297,17 @@ $badge = ['relation' => 'veza', 'native' => 'nativno', 'eav' => 'atribut'];
         <div class="panel">
             <p class="hint" style="margin:0 0 12px"><?= $e($spec['opis']) ?></p>
 
-            <div class="form-grid">
-                <div class="field">
-                    <label for="<?= $e($kind) ?>_type"><?= $e($spec['tipovi']) ?></label>
-                    <select id="<?= $e($kind) ?>_type" name="<?= $e($kind) ?>_type">
-                        <option value="">— nije izabran —</option>
-                        <?php foreach ($types[$kind] ?? [] as $slug => $label): ?>
-                            <option value="<?= $e($slug) ?>" <?= $current['type_slug'] === $slug ? 'selected' : '' ?>>
-                                <?= $e($label) ?> (<?= $e($slug) ?>)
-                            </option>
-                        <?php endforeach; ?>
-                    </select>
-                </div>
-
-                <?php if ($spec['units'] === true): ?>
-                    <div class="field">
-                        <label for="host_units_required">Rek jedinica</label>
-                        <span class="hint">Swagger ga navodi kao obavezan pri kreiranju opreme.</span>
-                        <input type="number" id="host_units_required" name="host_units_required"
-                               min="0" max="100" value="<?= $e($current['units_required'] ?? 1) ?>">
-                    </div>
-                <?php endif; ?>
+            <div class="field">
+                <label for="<?= $e($kind) ?>_type"><?= $e($spec['tipovi']) ?></label>
+                <span class="hint">Određuje koje je vrste CI koji se pravi; ostalo se podešava u tabeli.</span>
+                <select id="<?= $e($kind) ?>_type" name="<?= $e($kind) ?>_type">
+                    <option value="">— nije izabran —</option>
+                    <?php foreach ($types[$kind] ?? [] as $slug => $label): ?>
+                        <option value="<?= $e($slug) ?>" <?= $current['type_slug'] === $slug ? 'selected' : '' ?>>
+                            <?= $e($label) ?> (<?= $e($slug) ?>)
+                        </option>
+                    <?php endforeach; ?>
+                </select>
             </div>
         </div>
 
@@ -354,9 +352,11 @@ $badge = ['relation' => 'veza', 'native' => 'nativno', 'eav' => 'atribut'];
                                 <?php endif; ?>
                             </td>
                             <td>
-                                <?= $row['kind'] === 'relation'
-                                    ? $fixedSelect($kind, $row)
-                                    : $sourceSelect($kind, $row, $sourceGroups[$kind] ?? []) ?>
+                                <?= match ($row['value_mode']) {
+                                    'list'     => $fixedSelect($kind, $row),
+                                    'constant' => $constantInput($kind, $row),
+                                    default    => $sourceSelect($kind, $row, $sourceGroups[$kind] ?? []),
+                                } ?>
                             </td>
                             <td><?= $policySelect($kind, $row, $policies) ?></td>
                             <td>
