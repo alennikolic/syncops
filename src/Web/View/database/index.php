@@ -37,6 +37,7 @@ $totalRows = array_sum(array_column($tables, 'rows'));
             <span class="data"><?= $e($database) ?></span>
         </p>
     </div>
+    <a href="/db/reset" class="btn">Obriši prikupljene podatke</a>
 </div>
 
 <div class="panel">
