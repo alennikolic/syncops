@@ -15,6 +15,7 @@ use SensitiveParameter;
 use SyncOps\Integration\Integration;
 use SyncOps\Source\VCenter\Client\Soap\SoapHardwareClient;
 use SyncOps\Source\VCenter\Client\Soap\SoapTransport;
+use SyncOps\Source\VCenter\Client\Soap\Vim25Client;
 use SyncOps\Source\VCenter\VCenterException;
 
 class ClientFactory
@@ -34,6 +35,16 @@ class ClientFactory
         #[SensitiveParameter] string $password,
         string $flavor,
     ): ClientInterface {
+        // SOAP je samostalan dijalekt: Vim25Client sve cita sam, pa se ne
+        // umotava u HardwareAwareClient niti mu treba HTTP transport za REST.
+        if ($flavor === Integration::FLAVOR_SOAP) {
+            return new Vim25Client(
+                $this->soapTransport($integration),
+                $integration->username,
+                $password,
+            );
+        }
+
         $transport = $this->transport($integration);
 
         $rest = match ($flavor) {
