@@ -118,7 +118,7 @@ final class IntegrationRepository
         #[SensitiveParameter] string $password,
         int $port = 443,
         string $type = 'vcenter',
-        string $apiFlavor = Integration::FLAVOR_AUTO,
+        string $apiFlavor = Integration::FLAVOR_SOAP,
         bool $verifyPeer = false,
     ): int {
         if ($this->findByEndpoint($type, $hostname, $port) !== null) {
