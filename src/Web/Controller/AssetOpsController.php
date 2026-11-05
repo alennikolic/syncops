@@ -20,6 +20,7 @@ use SyncOps\Source\AssetOps\AssetOpsException;
 use SyncOps\Source\AssetOps\ClientFactory;
 use SyncOps\Source\AssetOps\ReferenceCollector;
 use SyncOps\Storage\AssetOpsRepository;
+use SyncOps\Sync\FieldCatalog;
 use SyncOps\Web\Auth;
 use SyncOps\Web\Flash;
 use SyncOps\Web\View;
@@ -67,6 +68,15 @@ final class AssetOpsController
             'tables'       => $tables,
             'lastSeen'     => $this->repo->lastSeenByKind($selected->id),
             'mapping'      => $this->repo->mapping($selected->id),
+            'fields'       => [
+                FieldCatalog::KIND_VM   => $this->targets($selected->id, FieldCatalog::KIND_VM),
+                FieldCatalog::KIND_HOST => $this->targets($selected->id, FieldCatalog::KIND_HOST),
+            ],
+            'sourceGroups' => [
+                FieldCatalog::KIND_VM   => FieldCatalog::sourceGroups(FieldCatalog::KIND_VM),
+                FieldCatalog::KIND_HOST => FieldCatalog::sourceGroups(FieldCatalog::KIND_HOST),
+            ],
+            'policies'     => FieldCatalog::POLICIES,
             'options'      => [
                 'virtual_asset_type' => $this->repo->options($selected->id, 'virtual_asset_type'),
                 'asset_type'         => $this->repo->options($selected->id, 'asset_type'),
@@ -164,7 +174,123 @@ final class AssetOpsController
         header('Location: /assetops?integration=' . $integration->id);
     }
 
+    /**
+     * Snimi mapiranje polja i atributa za obe vrste izvora.
+     */
+    public function saveFields(string $id): void
+    {
+        $integration = $this->requireAssetOps($id);
+
+        if ($integration === null) {
+            return;
+        }
+
+        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
+            $this->flash->error('Sesija je istekla. Pokušaj ponovo.');
+            header('Location: /assetops');
+
+            return;
+        }
+
+        $sent    = (array) ($_POST['map'] ?? []);
+        $keys    = (array) ($_POST['corr'] ?? []);
+        $counted = 0;
+
+        foreach ([FieldCatalog::KIND_VM, FieldCatalog::KIND_HOST] as $sourceKind) {
+            $rows = [];
+
+            foreach ((array) ($sent[$sourceKind] ?? []) as $target => $values) {
+                // Kljuc forme je "vrsta:ime"; sve posle prve dvotacke je ime,
+                // jer slug sme da je sadrzi.
+                [$targetKind, $targetKey] = array_pad(explode(':', (string) $target, 2), 2, '');
+
+                if ($targetKind === '' || $targetKey === '' || !is_array($values)) {
+                    continue;
+                }
+
+                $policy = (string) ($values['policy'] ?? 'never');
+
+                $rows[] = [
+                    'target_kind'    => $targetKind === 'eav' ? 'eav' : 'native',
+                    'target_key'     => $targetKey,
+                    'source_field'   => trim((string) ($values['source'] ?? '')),
+                    'constant_value' => trim((string) ($values['constant'] ?? '')),
+                    'write_policy'   => isset(FieldCatalog::POLICIES[$policy]) ? $policy : 'never',
+                    'is_correlation' => ((string) ($keys[$sourceKind] ?? '')) === (string) $target,
+                ];
+            }
+
+            $this->repo->saveFieldMap($integration->id, $sourceKind, $rows);
+
+            $counted += count(array_filter(
+                $rows,
+                static fn (array $r): bool => $r['write_policy'] !== 'never' || $r['is_correlation']
+            ));
+        }
+
+        $this->flash->success("Mapiranje polja je sačuvano — {$counted} podešenih.");
+        header('Location: /assetops?integration=' . $integration->id);
+    }
+
     // -----------------------------------------------------------------
+
+    /**
+     * Spisak ciljnih polja za jednu vrstu izvora: prvo nativna, pa EAV
+     * atributi primenjivi na odgovarajuci entitet.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function targets(int $integrationId, string $sourceKind): array
+    {
+        $map  = $this->repo->fieldMap($integrationId, $sourceKind);
+        $rows = [];
+
+        foreach (FieldCatalog::nativeFields($sourceKind) as $key => [$label, $type]) {
+            $rows[] = $this->target('native', $key, $label, $type, [], $map);
+        }
+
+        foreach ($this->repo->attributesForEntity($integrationId, FieldCatalog::entity($sourceKind)) as $attribute) {
+            $rows[] = $this->target(
+                'eav',
+                (string) $attribute['slug'],
+                (string) $attribute['name'],
+                (string) ($attribute['attribute_type'] ?? ''),
+                (array) ($attribute['possible_values'] ?? []),
+                $map
+            );
+        }
+
+        return $rows;
+    }
+
+    /**
+     * @param array<string, array<string, mixed>> $map
+     * @return array<string, mixed>
+     */
+    private function target(
+        string $kind,
+        string $key,
+        string $label,
+        string $type,
+        array $possibleValues,
+        array $map,
+    ): array {
+        $ref     = $kind . ':' . $key;
+        $current = $map[$ref] ?? null;
+
+        return [
+            'ref'             => $ref,
+            'kind'            => $kind,
+            'key'             => $key,
+            'label'           => $label,
+            'type'            => $type,
+            'possible_values' => $possibleValues,
+            'source_field'    => $current['source_field'] ?? null,
+            'constant_value'  => $current['constant_value'] ?? null,
+            'write_policy'    => $current['write_policy'] ?? 'never',
+            'is_correlation'  => $current['is_correlation'] ?? false,
+        ];
+    }
 
     /**
      * @return list<Integration>
