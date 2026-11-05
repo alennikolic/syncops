@@ -95,6 +95,22 @@ final class AssetOpsException extends RuntimeException
         );
     }
 
+    /**
+     * Upis odbijen: 2xx ali bez "data".
+     *
+     * Odvojeno od rejected() jer kod upisa uzrok nije oblik parametra nego
+     * sadrzaj tela — najcesce polje koje nedostaje ili slug koji ne postoji.
+     */
+    public static function writeRejected(string $method, string $path, string $message): self
+    {
+        return new self(
+            "AssetOPS je odbio {$method} na {$path}"
+            . ($message === '' ? '' : ": {$message}")
+            . '. Najcesce nedostaje obavezno polje ili je poslat slug koji ne postoji.',
+            200
+        );
+    }
+
     public static function notJson(string $path, string $snippet): self
     {
         return new self(
