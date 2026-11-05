@@ -358,10 +358,8 @@ final class AssetOpsRepository
             $kind = (string) $row['source_kind'];
 
             $byKind[$kind] = [
-                'type_slug'         => $row['type_slug'],
-                'location_slug'     => $row['location_slug'],
-                'visibility_groups' => $this->decodeGroups($row['visibility_groups']),
-                'units_required'    => $row['units_required'],
+                'type_slug'      => $row['type_slug'],
+                'units_required' => $row['units_required'],
             ];
         }
 
@@ -374,59 +372,41 @@ final class AssetOpsRepository
     private function emptyMapping(): array
     {
         return [
-            'type_slug'         => null,
-            'location_slug'     => null,
-            'visibility_groups' => [],
-            'units_required'    => null,
+            'type_slug'      => null,
+            'units_required' => null,
         ];
     }
 
     /**
-     * @param list<string> $visibilityGroups
+     * Tip CI-ja i broj rek jedinica.
+     *
+     * Lokacija i visibility grupe su od migracije 0014 obicni redovi u
+     * ao_field_map — to su polja kao i ostala, samo im vrednost dolazi iz
+     * prikupljenog spiska umesto iz vCentera. Tip ostaje ovde jer nije
+     * vrednost polja nego odluka koje je VRSTE CI koji se pravi.
      */
     public function saveMapping(
         int $integrationId,
         string $sourceKind,
         ?string $typeSlug,
-        ?string $locationSlug,
-        array $visibilityGroups,
         ?int $unitsRequired,
     ): void {
         $stmt = $this->pdo->prepare(
             'INSERT INTO ao_mapping
-                (integration_id, source_kind, type_slug, location_slug,
-                 visibility_groups, units_required, updated_at)
+                (integration_id, source_kind, type_slug, units_required, updated_at)
              VALUES
-                (:integration, :kind, :type, :location, :groups, :units, UTC_TIMESTAMP())
+                (:integration, :kind, :type, :units, UTC_TIMESTAMP())
              ON DUPLICATE KEY UPDATE
-                type_slug         = VALUES(type_slug),
-                location_slug     = VALUES(location_slug),
-                visibility_groups = VALUES(visibility_groups),
-                units_required    = VALUES(units_required),
-                updated_at        = UTC_TIMESTAMP()'
+                type_slug      = VALUES(type_slug),
+                units_required = VALUES(units_required),
+                updated_at     = UTC_TIMESTAMP()'
         );
 
         $stmt->execute([
             'integration' => $integrationId,
             'kind'        => $sourceKind,
-            'type'        => $typeSlug === '' ? null : $typeSlug,
-            'location'    => $locationSlug === '' ? null : $locationSlug,
-            'groups'      => $visibilityGroups === [] ? null : json_encode(array_values($visibilityGroups)),
+            'type'        => ($typeSlug === null || $typeSlug === '') ? null : $typeSlug,
             'units'       => $unitsRequired,
         ]);
-    }
-
-    /**
-     * @return list<string>
-     */
-    private function decodeGroups(mixed $raw): array
-    {
-        if (!is_string($raw) || $raw === '') {
-            return [];
-        }
-
-        $decoded = json_decode($raw, true);
-
-        return is_array($decoded) ? array_values(array_map(strval(...), $decoded)) : [];
     }
 }
