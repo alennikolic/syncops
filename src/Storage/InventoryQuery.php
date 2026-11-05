@@ -164,13 +164,14 @@ final class InventoryQuery
         $params = [];
 
         if (($filters['search'] ?? '') !== '') {
-            $where .= ' AND (h.name LIKE :search
-                          OR h.serial_number LIKE :search
-                          OR h.model LIKE :search
-                          OR h.vendor LIKE :search
-                          OR h.hardware_uuid LIKE :search
-                          OR h.moref LIKE :search)';
-            $params['search'] = '%' . $filters['search'] . '%';
+            $where .= $this->searchClause([
+                'h.name',
+                'h.serial_number',
+                'h.model',
+                'h.vendor',
+                'h.hardware_uuid',
+                'h.moref',
+            ], (string) $filters['search'], $params);
         }
 
         if (($filters['state'] ?? '') !== '') {
@@ -438,13 +439,14 @@ final class InventoryQuery
         $params = [];
 
         if (($filters['search'] ?? '') !== '') {
-            $where .= ' AND (v.name LIKE :search
-                          OR v.guest_hostname LIKE :search
-                          OR v.guest_ip_address LIKE :search
-                          OR v.instance_uuid LIKE :search
-                          OR v.bios_uuid LIKE :search
-                          OR v.moref LIKE :search)';
-            $params['search'] = '%' . $filters['search'] . '%';
+            $where .= $this->searchClause([
+                'v.name',
+                'v.guest_hostname',
+                'v.guest_ip_address',
+                'v.instance_uuid',
+                'v.bios_uuid',
+                'v.moref',
+            ], (string) $filters['search'], $params);
         }
 
         if (($filters['power'] ?? '') !== '') {
@@ -473,6 +475,33 @@ final class InventoryQuery
         }
 
         return [$where, $params];
+    }
+
+    /**
+     * Uslov pretrage preko vise kolona, sa ZASEBNIM parametrom po koloni.
+     *
+     * Zasto ne jedan :search ponovljen sest puta: veza se otvara sa
+     * PDO::ATTR_EMULATE_PREPARES = false, pa upit ide pravom MySQL-ovom
+     * pripremom. Tamo imenovani parametar sme da stoji samo na jednom mestu —
+     * drugo pojavljivanje daje "SQLSTATE[HY093]: Invalid parameter number".
+     * Sa emulacijom bi radilo, i upravo zato je ovo lako prevideti.
+     *
+     * @param list<string>         $columns Imena kolona, iskljucivo iz koda
+     * @param array<string, mixed> $params  Dopunjuje se vrednostima
+     */
+    private function searchClause(array $columns, string $term, array &$params): string
+    {
+        $value      = '%' . $term . '%';
+        $conditions = [];
+
+        foreach ($columns as $i => $column) {
+            $name = 'search_' . $i;
+
+            $conditions[]  = $column . ' LIKE :' . $name;
+            $params[$name] = $value;
+        }
+
+        return ' AND (' . implode(' OR ', $conditions) . ')';
     }
 
     /**
