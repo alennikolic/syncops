@@ -49,22 +49,6 @@ final class VCenterException extends RuntimeException
         );
     }
 
-    public static function wrongFlavor(string $path): self
-    {
-        return new self(
-            "Putanja {$path} ne postoji na ovom vCenteru — verovatno je izabran pogresan dijalekt API-ja.",
-            404
-        );
-    }
-
-    public static function tooManyObjects(string $what, int $limit): self
-    {
-        return new self(
-            "vCenter odbija da vrati listu: {$what} ima vise od {$limit}. "
-            . 'Upit mora biti particionisan po datacentru ili klasteru.'
-        );
-    }
-
     public static function unexpected(int $status, string $path, string $detail = ''): self
     {
         $suffix = $detail !== '' ? ": {$detail}" : '';
