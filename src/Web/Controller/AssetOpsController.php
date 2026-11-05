@@ -294,6 +294,13 @@ final class AssetOpsController
             $types = [];
 
             foreach ($this->repo->attributesForEntity($selected->id, $entity) as $attribute) {
+                // Atribut kog vise nema u AssetOPS-u se ne upisuje. Izostaje
+                // iz spiska tipova, pa ga Planner odbija sa razlogom umesto
+                // da posalje vrednost u nepostojece polje.
+                if (($attribute['missing'] ?? false) === true) {
+                    continue;
+                }
+
                 $types[(string) $attribute['slug']] = (string) ($attribute['attribute_type'] ?? '');
             }
 
@@ -703,7 +710,7 @@ final class AssetOpsController
         }
 
         foreach ($this->repo->attributesForEntity($integrationId, FieldCatalog::entity($sourceKind)) as $attribute) {
-            $rows[] = $this->target(
+            $row = $this->target(
                 'eav',
                 (string) $attribute['slug'],
                 (string) $attribute['name'],
@@ -711,6 +718,12 @@ final class AssetOpsController
                 (array) ($attribute['possible_values'] ?? []),
                 $map
             );
+
+            // Atribut kog vise nema u AssetOPS-u. Ne izostavlja se tiho:
+            // podeseno mapiranje bi tada nestalo sa ekrana a ostalo u bazi.
+            $row['missing'] = ($attribute['missing'] ?? false) === true;
+
+            $rows[] = $row;
         }
 
         return $rows;
@@ -739,6 +752,7 @@ final class AssetOpsController
             'multi'           => false,
             'required'        => false,
             'fixed'           => [],
+            'missing'         => false,
             'key'             => $key,
             'label'           => $label,
             'type'            => $type,
