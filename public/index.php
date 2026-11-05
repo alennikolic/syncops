@@ -48,6 +48,7 @@ use SyncOps\Run\DiscoveryRunner;
 use SyncOps\Run\RunRepository;
 use SyncOps\Source\VCenter\VCenterSource;
 use SyncOps\Storage\InventoryQuery;
+use SyncOps\Storage\Maintenance;
 use SyncOps\Storage\RawStore;
 use SyncOps\Storage\SchemaQuery;
 use SyncOps\Storage\Repository\ClusterRepository;
@@ -126,7 +127,13 @@ try {
         $integration = new IntegrationController($repo, $view, $auth, $flash, $tester, $runner);
         $inventory   = new InventoryController(new InventoryQuery($pdo), $view);
         $runs        = new RunController($pdo, $view);
-        $database    = new DatabaseController(new SchemaQuery($pdo), $view);
+        $database    = new DatabaseController(
+            new SchemaQuery($pdo),
+            $view,
+            new Maintenance($pdo),
+            $auth,
+            $flash,
+        );
 
         $router->get('/', $dashboard->index(...));
 
@@ -140,7 +147,12 @@ try {
         $router->get('/runs', $runs->index(...));
 
         // Pregled baze. Cita samo — nema unosa SQL-a ni izmena.
+        //
+        // /db/reset mora PRE /db/{table}, inace bi ga ruter procitao kao
+        // zahtev za tabelu imena "reset".
         $router->get('/db', $database->index(...));
+        $router->get('/db/reset', $database->resetForm(...));
+        $router->post('/db/reset', $database->reset(...));
         $router->get('/db/{table}', $database->table(...));
         $router->get('/db/{table}/{id}', $database->row(...));
 
