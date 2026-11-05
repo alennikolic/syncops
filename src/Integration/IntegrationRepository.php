@@ -15,7 +15,11 @@ use RuntimeException;
 use SensitiveParameter;
 use SyncOps\Core\Secret;
 
-final class IntegrationRepository
+// Nije final da bi se u testu mogao podmetnuti repozitorijum koji vraca
+// pripremljen kljuc umesto da cita bazu. Ista odluka kao kod ClientFactory
+// i SoapTransport: tester koji se ne moze pokrenuti bez MySQL-a i prave
+// instance nije tester.
+class IntegrationRepository
 {
     private const COLUMNS = 'id, type, name, hostname, port, username, api_flavor,
                              api_flavor_detected, product_version, verify_peer,
@@ -161,8 +165,11 @@ final class IntegrationRepository
         string $username,
         string $apiFlavor,
         bool $verifyPeer,
+        string $type = 'vcenter',
     ): void {
-        $existing = $this->findByEndpoint('vcenter', $hostname, $port);
+        // Jedinstvenost je po (type, hostname, port): isti host sme da bude
+        // i vCenter i AssetOPS, sto se na jednoj masini i desava.
+        $existing = $this->findByEndpoint($type, $hostname, $port);
 
         if ($existing !== null && $existing->id !== $id) {
             throw new RuntimeException(
