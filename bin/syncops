@@ -75,6 +75,7 @@ use SyncOps\Run\Worker;
 use SyncOps\Source\VCenter\Client\ClientFactory;
 use SyncOps\Source\VCenter\CollectionResult;
 use SyncOps\Source\AssetOps\ClientFactory as AssetOpsClientFactory;
+use SyncOps\Source\AssetOps\WriteProbe;
 use SyncOps\Source\AssetOps\ConnectionTester as AssetOpsTester;
 use SyncOps\Source\VCenter\ConnectionTester as VCenterTester;
 use SyncOps\Source\VCenter\VCenterSource;
@@ -148,6 +149,7 @@ $usage = static function () use ($stdout): void {
     $stdout('  integration:password <id>     Promeni lozinku');
     $stdout('  integration:enable <id>       Aktiviraj');
     $stdout('  integration:disable <id>      Deaktiviraj');
+    $stdout('  assetops:probe <id>           Izmeri kako se AssetOPS ponasa pri upisu');
     $stdout();
     $stdout('Ostalo:');
     $stdout('  key:generate                  Generisi vrednost za SECRET_KEY');
@@ -179,6 +181,7 @@ $known = [
     'integration:password',
     'integration:enable',
     'integration:disable',
+    'assetops:probe',
 ];
 
 if (in_array($command, ['help', '-h', '--help'], true)) {
@@ -530,6 +533,63 @@ try {
     if ($integration === null) {
         $stderr("Integracija {$id} ne postoji.");
         exit(1);
+    }
+
+    // =====================================================================
+    // Merenje ponasanja upisa u AssetOPS
+    // =====================================================================
+    if ($command === 'assetops:probe') {
+        if ($integration->type !== IntegrationType::ASSETOPS) {
+            $stderr("Integracija {$id} nije AssetOPS.");
+            exit(1);
+        }
+
+        $stdout('Merenje kako se AssetOPS ponasa pri upisu.');
+        $stdout();
+        $stdout('  Na ' . $integration->baseUrl() . ' ce se NAPRAVITI privremena virtuelna');
+        $stdout('  masina imena SyncOPS-proba-<vreme>, nad njom izmeriti ponasanje upisa,');
+        $stdout('  pa ce biti OBRISANA. Nista postojece se ne dira.');
+        $stdout();
+
+        if (!in_array('--force', $argv, true) && !$askYesNo('Nastaviti')) {
+            $stdout('Odustao.');
+            exit(0);
+        }
+
+        $stdout();
+
+        $client = (new AssetOpsClientFactory())->make($integration, $repo->password($integration->id));
+        $result = (new WriteProbe($client))->run();
+
+        $mark = ['ok' => '  DA ', 'lose' => '  NE ', 'pazi' => ' PAZI', 'nepoznato' => '   ? '];
+
+        foreach ($result['findings'] as $finding) {
+            $stdout(sprintf('%s  %s', $mark[$finding['outcome']] ?? '   ? ', $finding['label']));
+            $stdout(sprintf('        %s', $finding['detail']));
+            $stdout();
+        }
+
+        if ($result['notes'] !== []) {
+            $stdout('Napomene:');
+
+            foreach ($result['notes'] as $note) {
+                $stdout('  - ' . $note);
+            }
+
+            $stdout();
+        }
+
+        $stdout(sprintf('HTTP poziva: %d', $result['calls']));
+
+        if ($result['created'] !== null) {
+            $stdout(sprintf(
+                'Privremeni zapis %s: %s',
+                $result['created'],
+                $result['cleaned'] ? 'obrisan' : 'NIJE OBRISAN, obrisi ga rucno'
+            ));
+        }
+
+        exit($result['ok'] ? 0 : 1);
     }
 
     if ($command === 'integration:test') {
