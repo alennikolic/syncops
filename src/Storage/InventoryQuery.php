@@ -354,6 +354,50 @@ final class InventoryQuery
     }
 
     /**
+     * Istorija sirovih odgovora za jedan objekat, najnoviji prvi.
+     *
+     * payload se ne vraca ceo za svaki red — jedan objekat ume da bude
+     * nekoliko kilobajta, a istorija od deset prikupljanja bi onda bila
+     * desetine kilobajta samo da bi se ispisala tabela sa datumima. Vraca
+     * se duzina, pa prikaz nudi link na ceo zapis.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function rawHistory(int $integrationId, string $objectType, string $moref, int $limit = 15): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT id, run_id, collected_at, payload_hash,
+                    CHAR_LENGTH(payload) AS payload_length
+               FROM raw_object
+              WHERE integration_id = :integration
+                AND object_type    = :type
+                AND moref          = :moref
+              ORDER BY collected_at DESC, id DESC
+              LIMIT ' . (int) $limit
+        );
+        $stmt->execute([
+            'integration' => $integrationId,
+            'type'        => $objectType,
+            'moref'       => $moref,
+        ]);
+
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Ceo sirov odgovor jednog zapisa iz istorije.
+     */
+    public function rawPayload(int $rawObjectId): ?string
+    {
+        $stmt = $this->pdo->prepare('SELECT payload FROM raw_object WHERE id = :id');
+        $stmt->execute(['id' => $rawObjectId]);
+
+        $payload = $stmt->fetchColumn();
+
+        return $payload === false ? null : (string) $payload;
+    }
+
+    /**
      * Vrednosti za padajuce filtere na stranici masina.
      *
      * @return array{clusters: list<array<string, mixed>>, hosts: list<array<string, mixed>>, powers: list<string>, guests: list<string>}
