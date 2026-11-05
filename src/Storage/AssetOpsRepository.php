@@ -371,6 +371,209 @@ final class AssetOpsRepository
         return ['type_slug' => null];
     }
 
+    // -----------------------------------------------------------------
+    // Zateceni CI-jevi
+    // -----------------------------------------------------------------
+
+    /**
+     * Upisi procitane CI-jeve jednog entiteta. Vraca koliko je novo.
+     *
+     * Kao i referentni spiskovi: first_seen se postavlja samo pri prvom
+     * vidjenju, redovi se ne brisu. CI koji nestane iz AssetOPS-a ostaje sa
+     * starim last_seen, pa prikaz moze da ga oznaci — a faza nestanka da
+     * predlozi promenu statusa umesto da zapis nestane i iz nase baze.
+     *
+     * @param list<array<string, mixed>> $rows
+     * @return array{new: int, seen: int}
+     */
+    public function storeCi(int $integrationId, string $entity, array $rows): array
+    {
+        if ($rows === []) {
+            return ['new' => 0, 'seen' => 0];
+        }
+
+        $before = $this->ciUuids($integrationId, $entity);
+
+        $stmt = $this->pdo->prepare(
+            'INSERT INTO ao_ci
+                (integration_id, entity, uuid, name, type_slug, status_slug,
+                 location_slug, serial_number, correlation_key, correlation_value,
+                 payload, remote_updated_at, first_seen, last_seen)
+             VALUES
+                (:integration, :entity, :uuid, :name, :type, :status,
+                 :location, :serial, :corr_key, :corr_value,
+                 :payload, :remote, UTC_TIMESTAMP(), UTC_TIMESTAMP())
+             ON DUPLICATE KEY UPDATE
+                entity            = VALUES(entity),
+                name              = VALUES(name),
+                type_slug         = VALUES(type_slug),
+                status_slug       = VALUES(status_slug),
+                location_slug     = VALUES(location_slug),
+                serial_number     = VALUES(serial_number),
+                correlation_key   = VALUES(correlation_key),
+                correlation_value = VALUES(correlation_value),
+                payload           = VALUES(payload),
+                remote_updated_at = VALUES(remote_updated_at),
+                last_seen         = UTC_TIMESTAMP()'
+        );
+
+        foreach ($rows as $row) {
+            $stmt->execute([
+                'integration' => $integrationId,
+                'entity'      => $entity,
+                'uuid'        => $row['uuid'],
+                'name'        => $row['name'],
+                'type'        => $row['type_slug'],
+                'status'      => $row['status_slug'],
+                'location'    => $row['location_slug'],
+                'serial'      => $row['serial_number'],
+                'corr_key'    => $row['correlation_key'],
+                'corr_value'  => $row['correlation_value'],
+                'payload'     => $row['payload'],
+                'remote'      => $row['remote_updated_at'],
+            ]);
+        }
+
+        $new = 0;
+
+        foreach ($rows as $row) {
+            if (!in_array($row['uuid'], $before, true)) {
+                $new++;
+            }
+        }
+
+        return ['new' => $new, 'seen' => count($rows)];
+    }
+
+    /**
+     * @return list<string>
+     */
+    private function ciUuids(int $integrationId, string $entity): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT uuid FROM ao_ci WHERE integration_id = :i AND entity = :e'
+        );
+        $stmt->execute(['i' => $integrationId, 'e' => $entity]);
+
+        /** @var list<string> $uuids */
+        $uuids = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+        return $uuids;
+    }
+
+    /**
+     * Svi CI-jevi jednog entiteta, za prikaz.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function ciByEntity(int $integrationId, string $entity): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM ao_ci
+              WHERE integration_id = :i AND entity = :e
+              ORDER BY name'
+        );
+        $stmt->execute(['i' => $integrationId, 'e' => $entity]);
+
+        return $stmt->fetchAll();
+    }
+
+    /**
+     * Brojevi po entitetu: ukupno, sa vrednoscu kljuca, i poslednje vidjenje.
+     *
+     * Entitet koji nije prikupljen ne pojavljuje se u rezultatu — pozivalac
+     * razlikuje „nije prikupljeno" od „prikupljeno, nema ni jednog".
+     *
+     * @return array<string, array{total: int, with_key: int, last_seen: ?string}>
+     */
+    public function ciStats(int $integrationId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT entity,
+                    COUNT(*) AS total,
+                    SUM(correlation_value IS NOT NULL) AS with_key,
+                    MAX(last_seen) AS last_seen
+               FROM ao_ci
+              WHERE integration_id = :i
+              GROUP BY entity'
+        );
+        $stmt->execute(['i' => $integrationId]);
+
+        $byEntity = [];
+
+        foreach ($stmt->fetchAll() as $row) {
+            $byEntity[(string) $row['entity']] = [
+                'total'     => (int) $row['total'],
+                'with_key'  => (int) $row['with_key'],
+                'last_seen' => $row['last_seen'] === null ? null : (string) $row['last_seen'],
+            ];
+        }
+
+        return $byEntity;
+    }
+
+    /**
+     * Vrednosti kljuca spajanja koje nosi vise od jednog CI-ja.
+     *
+     * Duplikat se ne sprecava pri upisu nego se prijavljuje: dva CI-ja sa
+     * istim instance_uuid-om znace da je negde nastao dvojnik, i to je nalaz
+     * za coveka, ne greska baze.
+     *
+     * @return list<array{correlation_value: string, count: int, names: string}>
+     */
+    public function ciDuplicateKeys(int $integrationId, string $entity): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT correlation_value, COUNT(*) AS cnt, GROUP_CONCAT(name ORDER BY name SEPARATOR ", ") AS names
+               FROM ao_ci
+              WHERE integration_id = :i AND entity = :e AND correlation_value IS NOT NULL
+              GROUP BY correlation_value
+             HAVING cnt > 1
+              ORDER BY cnt DESC, correlation_value'
+        );
+        $stmt->execute(['i' => $integrationId, 'e' => $entity]);
+
+        $rows = [];
+
+        foreach ($stmt->fetchAll() as $row) {
+            $rows[] = [
+                'correlation_value' => (string) $row['correlation_value'],
+                'count'             => (int) $row['cnt'],
+                'names'             => (string) $row['names'],
+            ];
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Polje koje za svaku vrstu izvora nosi kljuc spajanja, kao "eav:<slug>"
+     * ili "native:<polje>".
+     *
+     * Najvise jedan po vrsti izvora — pravilo cuva saveFieldMap. Vrsta bez
+     * kljuca dobija null.
+     *
+     * @return array<string, ?string> vrsta izvora => ref ili null
+     */
+    public function correlationRefs(int $integrationId): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT source_kind, target_kind, target_key
+               FROM ao_field_map
+              WHERE integration_id = :i AND is_correlation = 1'
+        );
+        $stmt->execute(['i' => $integrationId]);
+
+        $byKind = ['vm' => null, 'host' => null];
+
+        foreach ($stmt->fetchAll() as $row) {
+            $byKind[(string) $row['source_kind']]
+                = $row['target_kind'] . ':' . $row['target_key'];
+        }
+
+        return $byKind;
+    }
+
     /**
      * Tip CI-ja koji se pravi od ove vrste izvora.
      *
