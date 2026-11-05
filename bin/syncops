@@ -74,11 +74,14 @@ use SyncOps\Run\RunStatus;
 use SyncOps\Run\Worker;
 use SyncOps\Source\VCenter\Client\ClientFactory;
 use SyncOps\Source\VCenter\CollectionResult;
+use SyncOps\Source\AssetOps\CiCollector;
 use SyncOps\Source\AssetOps\ClientFactory as AssetOpsClientFactory;
+use SyncOps\Source\AssetOps\ReferenceCollector;
 use SyncOps\Source\AssetOps\WriteProbe;
 use SyncOps\Source\AssetOps\ConnectionTester as AssetOpsTester;
 use SyncOps\Source\VCenter\ConnectionTester as VCenterTester;
 use SyncOps\Source\VCenter\VCenterSource;
+use SyncOps\Storage\AssetOpsRepository;
 use SyncOps\Storage\Maintenance;
 use SyncOps\Storage\RawStore;
 use SyncOps\Storage\Repository\ClusterRepository;
@@ -149,6 +152,7 @@ $usage = static function () use ($stdout): void {
     $stdout('  integration:password <id>     Promeni lozinku');
     $stdout('  integration:enable <id>       Aktiviraj');
     $stdout('  integration:disable <id>      Deaktiviraj');
+    $stdout('  assetops:collect <id>         Procitaj referentne spiskove i CI-jeve');
     $stdout('  assetops:probe <id>           Izmeri kako se AssetOPS ponasa pri upisu');
     $stdout();
     $stdout('Ostalo:');
@@ -181,6 +185,7 @@ $known = [
     'integration:password',
     'integration:enable',
     'integration:disable',
+    'assetops:collect',
     'assetops:probe',
 ];
 
@@ -533,6 +538,53 @@ try {
     if ($integration === null) {
         $stderr("Integracija {$id} ne postoji.");
         exit(1);
+    }
+
+    // =====================================================================
+    // Citanje iz AssetOPS-a: referentni spiskovi i zateceni CI-jevi
+    // =====================================================================
+    if ($command === 'assetops:collect') {
+        if ($integration->type !== IntegrationType::ASSETOPS) {
+            $stderr("Integracija {$id} nije AssetOPS.");
+            exit(1);
+        }
+
+        $stdout('Citam iz ' . $integration->baseUrl() . ' ...');
+        $stdout();
+
+        $client   = (new AssetOpsClientFactory())->make($integration, $repo->password($integration->id));
+        $assetOps = new AssetOpsRepository($pdo);
+
+        foreach ((new ReferenceCollector())->collect($client) as $kind => $rows) {
+            $stats = $assetOps->storeKind($integration->id, $kind, $rows);
+            $stdout(sprintf('  %-20s %4d%s', $kind, $stats['seen'],
+                $stats['new'] > 0 ? "  (novo {$stats['new']})" : ''));
+        }
+
+        // Kljuc spajanja se cita iz mapiranja, po entitetu. Vrsta bez
+        // podesenog kljuca se svejedno cita — bez vrednosti kljuca.
+        $refs     = $assetOps->correlationRefs($integration->id);
+        $byEntity = [
+            'virtual-asset' => $refs['vm'] ?? null,
+            'asset'         => $refs['host'] ?? null,
+        ];
+
+        $stdout();
+
+        foreach ((new CiCollector())->collect($client, $byEntity) as $entity => $rows) {
+            $stats = $assetOps->storeCi($integration->id, $entity, $rows);
+            $withKey = count(array_filter($rows, static fn (array $r): bool => $r['correlation_value'] !== null));
+
+            $stdout(sprintf('  %-20s %4d%s  kljuc: %d/%d%s', $entity, $stats['seen'],
+                $stats['new'] > 0 ? "  (novo {$stats['new']})" : '',
+                $withKey, count($rows),
+                $byEntity[$entity] === null ? '  (kljuc nije podesen u mapiranju)' : ''));
+        }
+
+        $stdout();
+        $stdout(sprintf('HTTP poziva: %d', $client->callCount()));
+
+        exit(0);
     }
 
     // =====================================================================
