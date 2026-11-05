@@ -40,6 +40,7 @@ use SyncOps\Source\VCenter\ConnectionTester;
 use SyncOps\Web\Auth;
 use SyncOps\Web\Controller\AuthController;
 use SyncOps\Web\Controller\DashboardController;
+use SyncOps\Web\Controller\DatabaseController;
 use SyncOps\Web\Controller\IntegrationController;
 use SyncOps\Web\Controller\InventoryController;
 use SyncOps\Web\Controller\RunController;
@@ -48,6 +49,7 @@ use SyncOps\Run\RunRepository;
 use SyncOps\Source\VCenter\VCenterSource;
 use SyncOps\Storage\InventoryQuery;
 use SyncOps\Storage\RawStore;
+use SyncOps\Storage\SchemaQuery;
 use SyncOps\Storage\Repository\ClusterRepository;
 use SyncOps\Storage\Repository\HostRepository;
 use SyncOps\Storage\Repository\VmRepository;
@@ -124,6 +126,7 @@ try {
         $integration = new IntegrationController($repo, $view, $auth, $flash, $tester, $runner);
         $inventory   = new InventoryController(new InventoryQuery($pdo), $view);
         $runs        = new RunController($pdo, $view);
+        $database    = new DatabaseController(new SchemaQuery($pdo), $view);
 
         $router->get('/', $dashboard->index(...));
 
@@ -135,6 +138,11 @@ try {
         $router->get('/hosts/{id}', $inventory->host(...));
         $router->get('/clusters', $inventory->clusters(...));
         $router->get('/runs', $runs->index(...));
+
+        // Pregled baze. Cita samo — nema unosa SQL-a ni izmena.
+        $router->get('/db', $database->index(...));
+        $router->get('/db/{table}', $database->table(...));
+        $router->get('/db/{table}/{id}', $database->row(...));
 
         $router->get('/integrations', $integration->index(...));
         $router->get('/integrations/new', $integration->createForm(...));
