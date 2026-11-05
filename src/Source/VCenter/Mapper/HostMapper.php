@@ -42,10 +42,29 @@ final class HostMapper
     /**
      * Dopuni hardverske podatke kada ih bude bilo odakle uzeti.
      *
+     * Hardver se dopisuje i u rawPayload, pod kljucem _hardware. Bez toga bi
+     * u raw_object stajao samo REST odgovor, pa bi se izgubila jedina svrha
+     * te tabele: da se polje koje maper danas ne cita kasnije izvuce iz nje,
+     * bez ponovnog skeniranja infrastrukture.
+     *
+     * Podvlaka u imenu kljuca znaci isto sto i kod _placement: polje nije
+     * stiglo iz odgovora nego ga je SyncOPS dodao. _source kaze kojim
+     * protokolom, jer REST i SOAP ne daju iste podatke.
+     *
      * @param array<string, mixed> $hw
      */
     public function withHardware(HostDto $host, array $hw, string $source): HostDto
     {
+        $payload = json_decode($host->rawPayload, true);
+
+        // Ako REST payload iz nekog razloga nije valjan JSON, cuva se kao
+        // tekst umesto da se tiho izgubi.
+        if (!is_array($payload)) {
+            $payload = ['_rest' => $host->rawPayload];
+        }
+
+        $payload['_hardware'] = ['_source' => $source] + $hw;
+
         return new HostDto(
             moref:           $host->moref,
             name:            $host->name,
@@ -53,7 +72,10 @@ final class HostMapper
             powerState:      $host->powerState,
             clusterMoref:    $host->clusterMoref,
             datacenterMoref: $host->datacenterMoref,
-            rawPayload:      $host->rawPayload,
+            rawPayload:      (string) json_encode(
+                $payload,
+                JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
+            ),
             hardwareSource:  $source,
             vendor:          self::str($hw['vendor'] ?? null),
             model:           self::str($hw['model'] ?? null),
