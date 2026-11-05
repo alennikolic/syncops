@@ -164,7 +164,10 @@ try {
         $router->get('/hosts/{id}', $inventory->host(...));
         $router->get('/clusters', $inventory->clusters(...));
 
+        // /assetops/mapping mora PRE ruta sa {id}, inace bi se "mapping"
+        // procitalo kao identifikator integracije.
         $router->get('/assetops', $assetOps->index(...));
+        $router->get('/assetops/mapping', $assetOps->mapping(...));
         $router->post('/assetops/{id}/refresh', $assetOps->refresh(...));
         $router->post('/assetops/{id}/mapping', $assetOps->saveMapping(...));
         $router->get('/runs', $runs->index(...));
