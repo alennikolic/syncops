@@ -235,4 +235,26 @@ final class FieldCatalog
     {
         return self::ENTITY[$sourceKind] ?? 'asset';
     }
+
+    /**
+     * Polja kojima se pokusava SLABO spajanje, redom.
+     *
+     * Postoje samo zbog prvog prolaza: dok SyncOPS nije nista upisao,
+     * nijedan CI ne nosi kljuc spajanja, pa bi bez ovoga sve izgledalo kao
+     * novo i napravili bismo duplikat svake masine koja vec postoji.
+     *
+     * Ime ide prvo jer je jedino sto obe strane uvek imaju. Kod hostova za
+     * njim ide serijski broj — kod masina ne, jer ga vCenter ne daje, a na
+     * strani AssetOPS-a 14 od 17 masina deli istu vrednost.
+     *
+     * Nijedno od ovoga ne pravi vezu samo: predlog mora da potvrdi covek.
+     *
+     * @return list<string>
+     */
+    public static function weakFields(string $sourceKind): array
+    {
+        return $sourceKind === self::KIND_HOST
+            ? ['name', 'serial_number']
+            : ['name'];
+    }
 }
