@@ -168,16 +168,10 @@ final class AssetOpsController
         $counted = 0;
 
         foreach ([FieldCatalog::KIND_VM, FieldCatalog::KIND_HOST] as $sourceKind) {
-            $units = trim((string) ($_POST[$sourceKind . '_units_required'] ?? ''));
-
             $this->repo->saveMapping(
                 integrationId: $integration->id,
                 sourceKind: $sourceKind,
                 typeSlug: trim((string) ($_POST[$sourceKind . '_type'] ?? '')),
-                // Broj rek jedinica postoji samo kod opreme.
-                unitsRequired: ($sourceKind === FieldCatalog::KIND_HOST && $units !== '')
-                    ? (int) $units
-                    : null,
             );
 
             $rows = $this->rowsFromForm(
@@ -215,13 +209,14 @@ final class AssetOpsController
 
             $policy = (string) ($values['policy'] ?? 'never');
 
-            // Veza nosi fiksnu vrednost iz prikupljenog spiska, ne polje iz
-            // vCentera. Visestruka (visibility grupe) se cuva kao JSON niz.
+            // Red daje ILI fiksnu vrednost ILI polje iz vCentera, nikad oboje.
+            // Fiksnu imaju veze (slug iz prikupljenog spiska) i polja kojima u
+            // vCenteru nema parnjaka, kao sto je broj rek jedinica.
             $constant = '';
             $source   = '';
 
-            if ($targetKind === 'relation') {
-                $fixed = $values['fixed'] ?? '';
+            if (array_key_exists('fixed', $values)) {
+                $fixed = $values['fixed'];
 
                 $constant = is_array($fixed)
                     ? (string) json_encode(array_values(array_filter(
@@ -279,8 +274,16 @@ final class AssetOpsController
             $rows[] = $row;
         }
 
-        foreach (FieldCatalog::nativeFields($sourceKind) as $key => [$label, $type]) {
-            $rows[] = $this->target('native', $key, $label, $type, [], $map);
+        foreach (FieldCatalog::nativeFields($sourceKind) as $key => [$label, $type, $valueMode]) {
+            $row = $this->target('native', $key, $label, $type, [], $map);
+
+            // Polje bez parnjaka u vCenteru upisuje se rukom.
+            $row['value_mode'] = $valueMode;
+            $row['fixed']      = $valueMode === 'constant' && (string) ($row['constant_value'] ?? '') !== ''
+                ? [(string) $row['constant_value']]
+                : [];
+
+            $rows[] = $row;
         }
 
         foreach ($this->repo->attributesForEntity($integrationId, FieldCatalog::entity($sourceKind)) as $attribute) {
@@ -315,6 +318,7 @@ final class AssetOpsController
         return [
             'ref'             => $ref,
             'kind'            => $kind,
+            'value_mode'      => $kind === 'relation' ? 'list' : 'source',
             'options'         => [],
             'multi'           => false,
             'required'        => false,
