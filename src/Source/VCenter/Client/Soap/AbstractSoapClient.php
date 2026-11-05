@@ -4,11 +4,12 @@
 // Zajednicka masinerija za rad sa vSphere Web Services API-jem (vim25) preko
 // /sdk krajnje tacke: sesija, citanje osobina i raspakivanje XML-a.
 //
-// Nasledjuju je dva klijenta:
-//   SoapHardwareClient — samo hardver hostova, kao dopuna REST klijentu
-//   Vim25Client        — pun klijent, kada je ceo dijalekt SOAP
+// Nasledjuje je Vim25Client, jedini vCenter klijent otkad je REST uklonjen.
+// Podela na osnovnu klasu i klijenta ipak ostaje: ovde je rad sa protokolom,
+// tamo poznavanje inventara, i to su dve stvari koje se menjaju iz razlicitih
+// razloga.
 //
-// Postupak je kod oba isti:
+// Postupak:
 //   1. RetrieveServiceContent -> rootFolder, propertyCollector, verzija API-ja
 //   2. Login                  -> kolacic sesije
 //   3. CreateContainerView    -> pogled na sve objekte jednog tipa
