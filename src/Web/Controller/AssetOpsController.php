@@ -27,6 +27,7 @@ use SyncOps\Sync\CiOverview;
 use SyncOps\Sync\FieldCatalog;
 use SyncOps\Sync\Matcher;
 use SyncOps\Sync\Planner;
+use SyncOps\Sync\TargetCatalog;
 use SyncOps\Web\Auth;
 use SyncOps\Web\Flash;
 use SyncOps\Web\View;
@@ -674,116 +675,17 @@ final class AssetOpsController
     // -----------------------------------------------------------------
 
     /**
-     * Spisak ciljnih polja za jednu vrstu izvora: prvo nativna, pa EAV
-     * atributi primenjivi na odgovarajuci entitet.
+     * Spisak ciljnih polja za jednu vrstu izvora.
+     *
+     * Sam racun je u TargetCatalog, da moze da se proveri bez kontrolera —
+     * sta se nudi u mapiranju odlucuje i sta se upisuje, pa to ne sme da
+     * zivi samo ovde.
      *
      * @return list<array<string, mixed>>
      */
     private function targets(int $integrationId, string $sourceKind): array
     {
-        $map  = $this->repo->fieldMap($integrationId, $sourceKind);
-        $rows = [];
-
-        // Veze idu prve: bez lokacije i visibility grupe kreiranje CI-ja pada,
-        // pa treba da budu prvo sto se vidi.
-        foreach (FieldCatalog::relations($sourceKind) as $key => [$label, $listKind, $multi, $required]) {
-            $row = $this->target('relation', $key, $label, '', [], $map);
-
-            $row['options']  = $this->repo->options($integrationId, $listKind);
-            $row['multi']    = $multi;
-            $row['required'] = $required;
-            $row['fixed']    = $this->decodeFixed((string) ($row['constant_value'] ?? ''), $multi);
-
-            $rows[] = $row;
-        }
-
-        foreach (FieldCatalog::nativeFields($sourceKind) as $key => [$label, $type, $valueMode]) {
-            $row = $this->target('native', $key, $label, $type, [], $map);
-
-            // Polje bez parnjaka u vCenteru upisuje se rukom.
-            $row['value_mode'] = $valueMode;
-            $row['fixed']      = $valueMode === 'constant' && (string) ($row['constant_value'] ?? '') !== ''
-                ? [(string) $row['constant_value']]
-                : [];
-
-            $rows[] = $row;
-        }
-
-        foreach ($this->repo->attributesForEntity($integrationId, FieldCatalog::entity($sourceKind)) as $attribute) {
-            $row = $this->target(
-                'eav',
-                (string) $attribute['slug'],
-                (string) $attribute['name'],
-                (string) ($attribute['attribute_type'] ?? ''),
-                (array) ($attribute['possible_values'] ?? []),
-                $map
-            );
-
-            // Atribut kog vise nema u AssetOPS-u. Ne izostavlja se tiho:
-            // podeseno mapiranje bi tada nestalo sa ekrana a ostalo u bazi.
-            $row['missing'] = ($attribute['missing'] ?? false) === true;
-
-            $rows[] = $row;
-        }
-
-        return $rows;
-    }
-
-    /**
-     * @param array<string, array<string, mixed>> $map
-     * @return array<string, mixed>
-     */
-    private function target(
-        string $kind,
-        string $key,
-        string $label,
-        string $type,
-        array $possibleValues,
-        array $map,
-    ): array {
-        $ref     = $kind . ':' . $key;
-        $current = $map[$ref] ?? null;
-
-        return [
-            'ref'             => $ref,
-            'kind'            => $kind,
-            'value_mode'      => $kind === 'relation' ? 'list' : 'source',
-            'options'         => [],
-            'multi'           => false,
-            'required'        => false,
-            'fixed'           => [],
-            'missing'         => false,
-            'key'             => $key,
-            'label'           => $label,
-            'type'            => $type,
-            'possible_values' => $possibleValues,
-            'source_field'    => $current['source_field'] ?? null,
-            'constant_value'  => $current['constant_value'] ?? null,
-            'write_policy'    => $current['write_policy'] ?? 'never',
-            'is_correlation'  => $current['is_correlation'] ?? false,
-        ];
-    }
-
-    /**
-     * Zapamcena vrednost veze: jedan slug, ili niz slugova kod visestruke.
-     *
-     * @return list<string>
-     */
-    private function decodeFixed(string $raw, bool $multi): array
-    {
-        if ($raw === '') {
-            return [];
-        }
-
-        if (!$multi) {
-            return [$raw];
-        }
-
-        $decoded = json_decode($raw, true);
-
-        return is_array($decoded)
-            ? array_values(array_map(strval(...), $decoded))
-            : [$raw];
+        return TargetCatalog::forSourceKind($this->repo, $integrationId, $sourceKind);
     }
 
     /**
