@@ -21,7 +21,9 @@ namespace SyncOps\Source\VCenter\Client\Soap;
 
 use SyncOps\Source\VCenter\VCenterException;
 
-final class SoapTransport
+// Nije final da bi se u testu mogao podmetnuti transport koji vraca snimljen
+// odgovor umesto da zove vCenter. Ista odluka kao kod ClientFactory.
+class SoapTransport
 {
     private const CONNECT_TIMEOUT = 10;
 
