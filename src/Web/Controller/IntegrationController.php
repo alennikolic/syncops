@@ -186,7 +186,7 @@ final class IntegrationController
             $this->flash->success(sprintf(
                 'Veza sa „%s” radi (%s%s). Pronađeno — %s',
                 $integration->name,
-                $result->flavor === Integration::FLAVOR_API_V2 ? '/api' : '/rest',
+                IntegrationType::flavorLabel($integration->type, $result->flavor),
                 $result->productVersion !== null ? ' ' . $result->productVersion : '',
                 $result->message
             ));
@@ -287,7 +287,7 @@ final class IntegrationController
             'title'       => $integration === null ? 'Nova integracija' : 'Izmena integracije',
             'nav'         => 'integrations',
             'integration' => $integration,
-            'flavors'     => IntegrationType::flavorGroups($integration?->type ?? self::TYPE),
+            'flavors'     => IntegrationType::flavors($integration?->type ?? self::TYPE),
             'errors'      => $errors,
             'csrf'        => $this->auth->csrfToken(),
             'value'       => $this->values($integration, $input),
@@ -325,7 +325,7 @@ final class IntegrationController
             'port'        => trim((string) ($_POST['port'] ?? '443')),
             'username'    => trim((string) ($_POST['username'] ?? '')),
             'password'    => (string) ($_POST['password'] ?? ''),
-            'api_flavor'  => (string) ($_POST['api_flavor'] ?? Integration::FLAVOR_AUTO),
+            'api_flavor'  => (string) ($_POST['api_flavor'] ?? IntegrationType::defaultFlavor(self::TYPE)),
             'verify_peer' => ($_POST['verify_peer'] ?? '') === '1' ? '1' : '0',
         ];
     }
