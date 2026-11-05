@@ -3,9 +3,10 @@
 //
 // Citanje hardverskih polja jednog HostSystem objekta iz vim25 odgovora.
 //
-// Izdvojeno u trait jer ista logika treba na dva mesta: SoapHardwareClient-u
-// (koji dopunjuje REST) i Vim25Client-u (koji radi sve sam). Nasledjivanje ne
-// bi odgovaralo — oni nisu jedan drugom vrsta, samo dele nacin citanja.
+// Izdvojeno u trait jer je citanje hardvera zaokruzena celina za sebe:
+// desetak polja, tri mesta na kojima proizvodjaci prijavljuju serijski broj i
+// spisak placeholder vrednosti koje treba odbaciti. Drzati to u Vim25Client-u
+// znacilo bi mesati poznavanje inventara sa poznavanjem hardverskih zapisa.
 
 declare(strict_types=1);
 
