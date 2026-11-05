@@ -15,11 +15,13 @@ namespace SyncOps\Source\VCenter;
 
 use SyncOps\Integration\Integration;
 use SyncOps\Integration\IntegrationRepository;
+use SyncOps\Source\SourceTester;
+use SyncOps\Source\TestResult;
 use SyncOps\Source\VCenter\Client\ClientFactory;
 use SyncOps\Source\VCenter\Client\ClientInterface;
 use Throwable;
 
-final class ConnectionTester
+final class ConnectionTester implements SourceTester
 {
     public function __construct(
         private readonly IntegrationRepository $repo,
