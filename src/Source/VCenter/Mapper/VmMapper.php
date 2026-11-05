@@ -49,7 +49,9 @@ final class VmMapper
             biosUuid:          self::str($identity['bios_uuid'] ?? null),
             name:              (string) ($detail['name'] ?? $identity['name'] ?? ''),
             powerState:        $powerState,
-            isTemplate:        false,
+            // REST ne vraca templejte uopste, pa polje kod njega ne postoji i
+            // ostaje false. SOAP ga daje (config.template), i tada je stvaran.
+            isTemplate:        (bool) ($detail['is_template'] ?? false),
             guestOs:           self::str($detail['guest_OS'] ?? $detail['guest_os'] ?? null),
             hardwareVersion:   self::str($hardware['version'] ?? null),
 
