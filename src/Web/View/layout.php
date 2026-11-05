@@ -38,6 +38,7 @@ $nav = $nav ?? '';
 
             <div class="nav-group">AssetOPS</div>
             <a href="/assetops"         <?= $nav === 'assetops'         ? 'aria-current="page"' : '' ?>>Referentni podaci</a>
+            <a href="/assetops/ci"      <?= $nav === 'assetops-ci'      ? 'aria-current="page"' : '' ?>>CI-jevi</a>
             <a href="/assetops/mapping" <?= $nav === 'assetops-mapping' ? 'aria-current="page"' : '' ?>>Mapiranje</a>
 
             <div class="nav-group">Podešavanje</div>
