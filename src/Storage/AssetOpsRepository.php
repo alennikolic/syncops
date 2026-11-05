@@ -381,6 +381,130 @@ final class AssetOpsRepository
         return ['type_slug' => null];
     }
 
+    /**
+     * Redovi koji nisu bili u poslednjem osvezavanju svoje vrste.
+     *
+     * To su slugovi obrisani u AssetOPS-u. Ne brisu se sami: dok mapiranje
+     * jos pokazuje na njih, treba da se vide — inace bi podesavanje tiho
+     * pokazivalo u prazno.
+     *
+     * Uz svaki red stoji i da li ga nesto jos koristi.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function staleReference(int $integrationId): array
+    {
+        $fresh = $this->lastSeenByKind($integrationId);
+
+        if ($fresh === []) {
+            return [];
+        }
+
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM ao_reference WHERE integration_id = :i ORDER BY kind, position, name'
+        );
+        $stmt->execute(['i' => $integrationId]);
+
+        $used = $this->referencedSlugs($integrationId);
+        $rows = [];
+
+        foreach ($stmt->fetchAll() as $row) {
+            $max = $fresh[(string) $row['kind']] ?? null;
+
+            if ($max === null || (string) $row['last_seen'] >= $max) {
+                continue;
+            }
+
+            $row['in_use'] = isset($used[(string) $row['slug']]);
+
+            $rows[] = $row;
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Obrisi nestale redove koje nista ne koristi.
+     *
+     * Red na koji jos pokazuje mapiranje se ZADRZAVA. Brisanje bi uklonilo
+     * jedino mesto na kom se vidi da podesavanje pokazuje u nesto cega vise
+     * nema, a greska bi se otkrila tek pri upisu.
+     *
+     * @return array{removed: int, kept: int}
+     */
+    public function removeStaleReference(int $integrationId): array
+    {
+        $stale   = $this->staleReference($integrationId);
+        $removed = 0;
+        $kept    = 0;
+
+        $delete = $this->pdo->prepare('DELETE FROM ao_reference WHERE id = :id');
+
+        foreach ($stale as $row) {
+            if ($row['in_use'] === true) {
+                $kept++;
+
+                continue;
+            }
+
+            $delete->execute(['id' => $row['id']]);
+            $removed++;
+        }
+
+        return ['removed' => $removed, 'kept' => $kept];
+    }
+
+    /**
+     * Svi slugovi na koje jos nesto pokazuje, kao skup.
+     *
+     * Namerno je plitko: ne gleda se odakle slug dolazi nego samo da li se
+     * negde pominje. Zastita viska je bezopasna, a propusteno brisanje
+     * referentnog reda nije.
+     *
+     * @return array<string, true>
+     */
+    private function referencedSlugs(int $integrationId): array
+    {
+        $used = [];
+
+        $types = $this->pdo->prepare('SELECT type_slug FROM ao_mapping WHERE integration_id = :i');
+        $types->execute(['i' => $integrationId]);
+
+        foreach ($types->fetchAll(PDO::FETCH_COLUMN) as $slug) {
+            if ($slug !== null && $slug !== '') {
+                $used[(string) $slug] = true;
+            }
+        }
+
+        $fields = $this->pdo->prepare(
+            'SELECT target_kind, target_key, constant_value FROM ao_field_map WHERE integration_id = :i'
+        );
+        $fields->execute(['i' => $integrationId]);
+
+        foreach ($fields->fetchAll() as $row) {
+            if ((string) $row['target_kind'] === 'eav') {
+                $used[(string) $row['target_key']] = true;
+            }
+
+            $constant = (string) ($row['constant_value'] ?? '');
+
+            if ($constant === '') {
+                continue;
+            }
+
+            // Visestruka veza je zapamcena kao JSON niz slugova.
+            $decoded = json_decode($constant, true);
+
+            foreach (is_array($decoded) ? $decoded : [$constant] as $slug) {
+                if (is_string($slug) && $slug !== '') {
+                    $used[$slug] = true;
+                }
+            }
+        }
+
+        return $used;
+    }
+
     // -----------------------------------------------------------------
     // Zateceni CI-jevi
     // -----------------------------------------------------------------
