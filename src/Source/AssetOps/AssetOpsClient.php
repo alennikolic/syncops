@@ -157,34 +157,122 @@ class AssetOpsClient
     }
 
     // -----------------------------------------------------------------
+    // Upis
+    // -----------------------------------------------------------------
+
+    /**
+     * Kreiranje. Vraca sadrzaj polja "data" — svedeni zapis, ne ceo CI.
+     *
+     * AssetOPS na uspesno kreiranje vraca 200, ne 201, pa se uspeh ne sme
+     * proveravati poklapanjem na tacan kod. Odgovor NE sadrzi poslata polja
+     * kao sto su serial_number, status, tags i attribute_values — da bi se
+     * znalo sta je stvarno upisano, zapis se mora procitati ponovo.
+     *
+     * @param array<string, mixed> $body
+     * @return array<string, mixed>
+     */
+    public function post(string $path, array $body): array
+    {
+        $response = $this->request($path, [], 'POST', $body);
+
+        if (!array_key_exists('data', $response) || $response['data'] === null) {
+            throw AssetOpsException::writeRejected('POST', $path, $this->message($response));
+        }
+
+        /** @var array<string, mixed> $data */
+        $data = is_array($response['data']) ? $response['data'] : ['value' => $response['data']];
+
+        return $data;
+    }
+
+    /**
+     * Izmena. Na samom zapisu PATCH ne postoji — samo GET, PUT i DELETE.
+     *
+     * @param array<string, mixed> $body
+     * @return array<string, mixed>
+     */
+    public function put(string $path, array $body): array
+    {
+        $response = $this->request($path, [], 'PUT', $body);
+
+        if (!array_key_exists('data', $response) || $response['data'] === null) {
+            throw AssetOpsException::writeRejected('PUT', $path, $this->message($response));
+        }
+
+        /** @var array<string, mixed> $data */
+        $data = is_array($response['data']) ? $response['data'] : ['value' => $response['data']];
+
+        return $data;
+    }
+
+    /**
+     * Brisanje.
+     *
+     * JEDINI poziv kod kog "data": null znaci uspeh, a ne odbijen upit:
+     * uspesno brisanje vraca 200 sa data: null i message "Item deleted.".
+     * Zato se ovde uspeh cita iz polja success.
+     */
+    public function delete(string $path): bool
+    {
+        $response = $this->request($path, [], 'DELETE');
+
+        return ($response['success'] ?? false) === true;
+    }
+
+    /**
+     * @param array<string, mixed> $response
+     */
+    private function message(array $response): string
+    {
+        $message = $response['message'] ?? $response['detail'] ?? '';
+
+        return is_string($message) ? $message : '';
+    }
+
+    // -----------------------------------------------------------------
     // HTTP
     // -----------------------------------------------------------------
 
     /**
      * @param array<string, scalar> $query
+     * @param array<string, mixed>|null $body
      * @return array<string, mixed> celo telo odgovora, sa omotacem
      */
-    protected function request(string $path, array $query = []): array
+    protected function request(string $path, array $query = [], string $method = 'GET', ?array $body = null): array
     {
         $url = $this->baseUrl . $path . ($query === [] ? '' : '?' . http_build_query($query));
+
+        $headers = [
+            // Api-Key, ne Bearer. Vidi komentar na vrhu klase.
+            'Authorization: Api-Key ' . $this->apiKey,
+            'Accept: application/json',
+        ];
+
+        if ($body !== null) {
+            $headers[] = 'Content-Type: application/json';
+        }
 
         $ch = curl_init();
 
         curl_setopt_array($ch, [
             CURLOPT_URL            => $url,
-            CURLOPT_HTTPGET        => true,
+            CURLOPT_CUSTOMREQUEST  => $method,
             CURLOPT_RETURNTRANSFER => true,
             CURLOPT_HEADER         => false,
             CURLOPT_CONNECTTIMEOUT => self::CONNECT_TIMEOUT,
             CURLOPT_TIMEOUT        => $this->timeout,
             CURLOPT_SSL_VERIFYPEER => $this->verifyPeer,
             CURLOPT_SSL_VERIFYHOST => $this->verifyPeer ? 2 : 0,
-            CURLOPT_HTTPHEADER     => [
-                // Api-Key, ne Bearer. Vidi komentar na vrhu klase.
-                'Authorization: Api-Key ' . $this->apiKey,
-                'Accept: application/json',
-            ],
+            CURLOPT_HTTPHEADER     => $headers,
         ]);
+
+        if ($body !== null) {
+            curl_setopt(
+                $ch,
+                CURLOPT_POSTFIELDS,
+                (string) json_encode($body, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES)
+            );
+        }
 
         $this->callCount++;
 
@@ -200,6 +288,21 @@ class AssetOpsClient
         }
 
         return $this->decode($path, (string) $raw, $status);
+    }
+
+    /**
+     * Celo telo odgovora, bez provere polja data.
+     *
+     * Potrebno merenju ponasanja upisa, koje gleda i status i message i
+     * sirov oblik odgovora — dakle upravo ono sto ostale metode sakrivaju.
+     *
+     * @param array<string, scalar> $query
+     * @param array<string, mixed>|null $body
+     * @return array<string, mixed>
+     */
+    public function raw(string $path, string $method = 'GET', ?array $body = null, array $query = []): array
+    {
+        return $this->request($path, $query, $method, $body);
     }
 
     /**
