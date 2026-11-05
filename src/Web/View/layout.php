@@ -40,6 +40,7 @@ $nav = $nav ?? '';
             <a href="/assetops"         <?= $nav === 'assetops'         ? 'aria-current="page"' : '' ?>>Referentni podaci</a>
             <a href="/assetops/ci"      <?= $nav === 'assetops-ci'      ? 'aria-current="page"' : '' ?>>CI-jevi</a>
             <a href="/assetops/mapping" <?= $nav === 'assetops-mapping' ? 'aria-current="page"' : '' ?>>Mapiranje</a>
+            <a href="/assetops/match"   <?= $nav === 'assetops-match'   ? 'aria-current="page"' : '' ?>>Spajanje</a>
 
             <div class="nav-group">Podešavanje</div>
             <a href="/runs"         <?= $nav === 'runs'         ? 'aria-current="page"' : '' ?>>Prikupljanja</a>
