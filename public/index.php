@@ -167,6 +167,7 @@ try {
         $router->get('/assetops', $assetOps->index(...));
         $router->post('/assetops/{id}/refresh', $assetOps->refresh(...));
         $router->post('/assetops/{id}/mapping', $assetOps->saveMapping(...));
+        $router->post('/assetops/{id}/fields', $assetOps->saveFields(...));
         $router->get('/runs', $runs->index(...));
 
         // Pregled baze. Cita samo — nema unosa SQL-a ni izmena.
