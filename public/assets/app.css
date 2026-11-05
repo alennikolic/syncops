@@ -714,3 +714,14 @@ pre.raw-full {
     cursor: not-allowed;
     filter: none;
 }
+
+/* Notes sa virtuelne masine: ljudski tekst, ne podatak — zato bez monospace
+   fonta, sa ocuvanim prelomima redova i ogranicenom sirinom reda, da se duzi
+   opis cita kao tekst a ne kao tabela. */
+.panel.notes { margin-bottom: 16px; }
+.notes-body {
+    max-width: 78ch;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--ink);
+}
