@@ -89,8 +89,21 @@ services:
   # CLI worker — isti image kao "app", drugi entrypoint.
   #
   # Uzima poslove iz reda cekanja (discovery_run sa statusom queued) koje
-  # upisuje GUI ili "discover:queue". Na stop/restart zavrsava tekuci posao
-  # pa izlazi, zato je stop_grace_period duzi od podrazumevanih 10 s.
+  # upisuje GUI ili "discover:queue".
+  #
+  # Gasenje: na SIGTERM worker zavrsi tekuci posao pa izadje. Nedovrsen posao
+  # bi ostao u stanju running i zakljucao integraciju do isteka od 30 minuta,
+  # zato se ceka — ali samo onoliko koliko posao stvarno traje.
+  #
+  # stop_grace_period je bio 5m iz vremena REST klijenta, kom je prikupljanje
+  # trajalo minutima. Preko SOAP-a ceo inventar od 156 masina ode za 0,7 s,
+  # pa je 30 s vise nego dovoljno — a istovremeno gornja granica cekanja ako
+  # signal iz nekog razloga ne stigne do procesa.
+  #
+  # init: true stavlja tini kao PID 1, a on prosledjuje signale PHP-u. Bez
+  # njega je PHP sam PID 1, gde kernel ignorise signale za koje nije izricito
+  # postavljen rukovalac — radi dok god se pcntl ucita, ali tini uklanja i tu
+  # zavisnost.
   # ---------------------------------------------------------------
   worker:
     build:
@@ -99,7 +112,8 @@ services:
     container_name: syncops-worker
     restart: unless-stopped
     command: ["php", "/app/bin/syncops", "worker"]
-    stop_grace_period: 5m
+    init: true
+    stop_grace_period: 30s
     volumes:
       - .:/app
     environment:
