@@ -328,14 +328,74 @@ class AssetOpsClient
         }
 
         if ($status < 200 || $status >= 300) {
-            throw AssetOpsException::unexpected(
-                $status,
-                $path,
-                is_string($body['detail'] ?? null) ? $body['detail'] : ''
-            );
+            throw AssetOpsException::unexpected($status, $path, $this->errorDetail($body));
         }
 
         return $body;
+    }
+
+    /**
+     * Sta je tacno zamerio server.
+     *
+     * Kod 422 AssetOPS imenuje polje koje smeta, ali ne u "detail" nego u
+     * "data", kao mapu polje => spisak poruka. Bez ovoga ostaje samo gola
+     * sifra statusa, a ona ne kaze nista: sve greske u upisu izgledaju isto.
+     *
+     * @param array<string, mixed> $body
+     */
+    private function errorDetail(array $body): string
+    {
+        $parts = [];
+
+        foreach (['detail', 'message'] as $key) {
+            $value = $body[$key] ?? null;
+
+            if (is_string($value) && trim($value) !== '') {
+                $parts[] = trim($value);
+
+                break;
+            }
+        }
+
+        $data = $body['data'] ?? null;
+
+        if (is_array($data)) {
+            foreach ($data as $field => $errors) {
+                // Niz bez imenovanih kljuceva nije mapa gresaka po polju.
+                if (is_int($field)) {
+                    continue;
+                }
+
+                $text = $this->flatten($errors);
+
+                if ($text !== '') {
+                    $parts[] = $field . ': ' . $text;
+                }
+            }
+        }
+
+        // Dovoljno da se vidi sta fali, a da poruka ostane citljiva u redu
+        // dnevnika; celo telo greske ionako stoji uz zapis.
+        return implode(' — ', array_slice($parts, 0, 6));
+    }
+
+    private function flatten(mixed $value): string
+    {
+        if (is_array($value)) {
+            $parts = [];
+
+            foreach ($value as $item) {
+                $parts[] = $this->flatten($item);
+            }
+
+            return trim(implode(' ', array_filter($parts)));
+        }
+
+        if (is_bool($value)) {
+            return $value ? 'true' : 'false';
+        }
+
+        return $value === null ? '' : trim((string) $value);
     }
 
     /**
