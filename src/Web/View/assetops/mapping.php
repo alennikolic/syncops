@@ -181,11 +181,15 @@ $anyRows = array_sum(array_map('count', $fields)) > 0;
                     </thead>
                     <tbody>
                     <?php foreach ($rows as $row):
-                        $rail = $row['is_correlation']
-                            ? 'rail-ok'
-                            : ($row['write_policy'] === 'never'
-                                ? ($row['required'] ? 'rail-bad' : 'rail-idle')
-                                : 'rail-warn');
+                        $missing = ($row['missing'] ?? false) === true;
+
+                        $rail = $missing
+                            ? 'rail-bad'
+                            : ($row['is_correlation']
+                                ? 'rail-ok'
+                                : ($row['write_policy'] === 'never'
+                                    ? ($row['required'] ? 'rail-bad' : 'rail-idle')
+                                    : 'rail-warn'));
                     ?>
                         <tr>
                             <td class="rail <?= $rail ?> stacked">
@@ -203,6 +207,25 @@ $anyRows = array_sum(array_map('count', $fields)) > 0;
                                     <span class="sub data muted"><?= $e($row['type']) ?></span>
                                 <?php endif; ?>
                             </td>
+
+                            <?php if ($missing):
+                                // Atributa vise nema u AssetOPS-u. Red nema nijedno
+                                // polje obrasca, pa cuvanje mapiranja izbacuje i red
+                                // iz baze — forma uvek salje ceo spisak. Ne izostavlja
+                                // se tiho: covek treba da vidi sta je bilo podeseno pre
+                                // nego sto nestane.
+                            ?>
+                                <td colspan="3" class="state-bad">
+                                    Nema ga više u AssetOPS-u.
+                                    <?php if (($row['write_policy'] ?? 'never') !== 'never' || $row['is_correlation']): ?>
+                                        Bilo je podešeno:
+                                        <span class="data"><?= $e($row['source_field'] ?? $row['constant_value'] ?? '—') ?></span>,
+                                        <span class="data"><?= $e($policies[$row['write_policy']] ?? $row['write_policy']) ?></span><?php
+                                        if ($row['is_correlation']): ?>, <b>ključ spajanja</b><?php endif; ?>.
+                                    <?php endif; ?>
+                                    Nestaje iz mapiranja kad sačuvaš.
+                                </td>
+                            <?php else: ?>
                             <td>
                                 <?= match ($row['value_mode']) {
                                     'list'     => $fixedSelect($kind, $row),
@@ -225,6 +248,7 @@ $anyRows = array_sum(array_map('count', $fields)) > 0;
                                     <span class="muted">—</span>
                                 <?php endif; ?>
                             </td>
+                            <?php endif; ?>
                         </tr>
                     <?php endforeach; ?>
                     </tbody>
