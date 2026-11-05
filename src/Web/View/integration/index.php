@@ -11,14 +11,27 @@
 // onakav kakav stoji u bazi, pa stariji red ne obori ekran.
 $flavor = static fn (\SyncOps\Integration\Integration $i, ?string $f): string
     => \SyncOps\Integration\IntegrationType::flavorLabel($i->type, $f);
+
+$typeLabel = static fn (string $t): string => \SyncOps\Integration\IntegrationType::label($t);
+$typeRole  = static fn (string $t): string => \SyncOps\Integration\IntegrationType::role($t);
+
+// Dugmad se izvode iz spiska tipova, pa nov tip dobije svoje dugme sam.
+$types = \SyncOps\Integration\IntegrationType::all();
 ?>
 
 <div class="page-head">
     <div>
         <h1>Integracije</h1>
-        <p>vCenter serveri sa kojih SyncOPS prikuplja podatke.</p>
+        <p>Izvori sa kojih SyncOPS prikuplja podatke i odredišta sa kojima se sinhronizuje.</p>
     </div>
-    <a href="/integrations/new" class="btn btn-primary">Dodaj vCenter</a>
+    <div class="head-actions">
+        <?php foreach ($types as $key => $label): ?>
+            <a href="/integrations/new/<?= $e($key) ?>"
+               class="btn <?= $key === \SyncOps\Integration\IntegrationType::VCENTER ? 'btn-primary' : '' ?>">
+                Dodaj <?= $e(\SyncOps\Integration\IntegrationType::form($key)['noun']) ?>
+            </a>
+        <?php endforeach; ?>
+    </div>
 </div>
 
 <div class="panel">
@@ -26,7 +39,8 @@ $flavor = static fn (\SyncOps\Integration\Integration $i, ?string $f): string
 
         <div class="empty">
             <p>Lista je prazna. Dodaj vCenter da bi prikupljanje moglo da počne.</p>
-            <a href="/integrations/new" class="btn btn-primary">Dodaj vCenter</a>
+            <a href="/integrations/new/<?= $e(\SyncOps\Integration\IntegrationType::VCENTER) ?>"
+               class="btn btn-primary">Dodaj vCenter</a>
         </div>
 
     <?php else: ?>
@@ -35,9 +49,10 @@ $flavor = static fn (\SyncOps\Integration\Integration $i, ?string $f): string
             <thead>
                 <tr>
                     <th>Naziv</th>
+                    <th>Tip</th>
                     <th>Adresa</th>
                     <th>Servisni nalog</th>
-                    <th>vCenter</th>
+                    <th>API</th>
                     <th>Provera konekcije</th>
                     <th></th>
                 </tr>
@@ -55,13 +70,18 @@ $flavor = static fn (\SyncOps\Integration\Integration $i, ?string $f): string
                             <div class="muted">isključena</div>
                         <?php endif; ?>
                     </td>
+                    <td class="stacked">
+                        <span><?= $e($typeLabel($i->type)) ?></span>
+                        <span class="sub muted"><?= $e($typeRole($i->type)) ?></span>
+                    </td>
                     <td class="data"><?= $e($i->baseUrl()) ?></td>
                     <td class="data"><?= $e($i->username) ?></td>
                     <td class="stacked">
-                        <?= $i->productVersion === null
-                            ? '<span class="muted">nepoznata verzija</span>'
-                            : '<span class="data">' . $e($i->productVersion) . '</span>' ?>
-                        <span class="sub data muted"><?= $e($flavor($i, $i->apiFlavor)) ?></span>
+                        <span class="data"><?= $e($flavor($i, $i->apiFlavor)) ?></span>
+                        <?php /* Verziju prijavljuje samo vCenter; AssetOPS je nema. */ ?>
+                        <?php if ($i->productVersion !== null): ?>
+                            <span class="sub data"><?= $e($i->productVersion) ?></span>
+                        <?php endif; ?>
                     </td>
                     <td>
                         <?php if ($i->lastTestedAt === null): ?>
@@ -77,8 +97,11 @@ $flavor = static fn (\SyncOps\Integration\Integration $i, ?string $f): string
                         <?php endif; ?>
                     </td>
                     <td class="row-actions">
+                        <?php /* vCenter ide kroz workera, AssetOPS se cita odmah. */ ?>
                         <?php if ($i->isActive): ?>
-                            <form method="post" action="/integrations/<?= $e($i->id) ?>/discover">
+                            <form method="post" action="<?= $i->type === \SyncOps\Integration\IntegrationType::ASSETOPS
+                                ? '/assetops/' . $e($i->id) . '/refresh'
+                                : '/integrations/' . $e($i->id) . '/discover' ?>">
                                 <input type="hidden" name="csrf" value="<?= $e($csrf) ?>">
                                 <button type="submit" class="btn-link">Prikupi</button>
                             </form>
