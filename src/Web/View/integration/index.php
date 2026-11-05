@@ -5,12 +5,12 @@
 /** @var list<\SyncOps\Integration\Integration> $integrations */
 /** @var string $csrf */
 
-$flavorLabel = [
-    'auto'        => 'prepoznaje sam',
-    'api_v2'      => '/api',
-    'rest_legacy' => '/rest',
-    'soap'        => '/sdk',
-];
+// Kratke oznake dijalekata dolaze iz IntegrationType, po tipu integracije —
+// ovde se vise ne drzi sopstveni spisak koji ume da zaostane za pravim.
+// Nepoznat dijalekt se vraca onakav kakav stoji u bazi, pa stariji red ne
+// obori ekran.
+$flavor = static fn (\SyncOps\Integration\Integration $i, ?string $f): string
+    => \SyncOps\Integration\IntegrationType::flavorLabel($i->type, $f);
 ?>
 
 <div class="page-head">
@@ -58,9 +58,9 @@ $flavorLabel = [
                     <td class="data"><?= $e($i->baseUrl()) ?></td>
                     <td class="data"><?= $e($i->username) ?></td>
                     <td>
-                        <?= $e($flavorLabel[$i->apiFlavor] ?? $i->apiFlavor) ?>
+                        <?= $e($flavor($i, $i->apiFlavor)) ?>
                         <?php if ($i->apiFlavor === 'auto' && $i->apiFlavorDetected !== null): ?>
-                            <div class="data muted"><?= $e($flavorLabel[$i->apiFlavorDetected] ?? $i->apiFlavorDetected) ?><?php
+                            <div class="data muted"><?= $e($flavor($i, $i->apiFlavorDetected)) ?><?php
                                 if ($i->productVersion !== null) { echo ' ' . $e($i->productVersion); }
                             ?></div>
                         <?php endif; ?>
