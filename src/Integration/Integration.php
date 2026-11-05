@@ -16,7 +16,8 @@ final class Integration
 {
     // vCenter se cita iskljucivo preko vim25 (/sdk). REST dijalekti su
     // uklonjeni u migraciji 0010; stare vrednosti su tada prevedene na soap.
-    public const FLAVOR_SOAP = 'soap';          // /sdk  (vim25, sve verzije)
+    public const FLAVOR_SOAP = 'soap';          // vCenter:  /sdk (vim25)
+    public const FLAVOR_API_KEY = 'api_key';    // AssetOPS: Authorization: Api-Key
 
     public function __construct(
         public readonly int $id,
