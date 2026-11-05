@@ -88,6 +88,7 @@ use SyncOps\Storage\Maintenance;
 use SyncOps\Storage\RawStore;
 use SyncOps\Sync\FieldCatalog;
 use SyncOps\Sync\Matcher;
+use SyncOps\Sync\Planner;
 use SyncOps\Storage\Repository\ClusterRepository;
 use SyncOps\Storage\Repository\HostRepository;
 use SyncOps\Storage\Repository\VmRepository;
@@ -158,6 +159,7 @@ $usage = static function () use ($stdout): void {
     $stdout('  integration:disable <id>      Deaktiviraj');
     $stdout('  assetops:collect <id>         Procitaj referentne spiskove i CI-jeve');
     $stdout('  assetops:match <id>           Predlog spajanja inventara i CI-jeva (bez upisa)');
+    $stdout('  assetops:plan <id>            Sta bi se upisalo u AssetOPS (bez upisa)');
     $stdout('  assetops:probe <id>           Izmeri kako se AssetOPS ponasa pri upisu');
     $stdout();
     $stdout('Ostalo:');
@@ -192,6 +194,7 @@ $known = [
     'integration:disable',
     'assetops:collect',
     'assetops:match',
+    'assetops:plan',
     'assetops:probe',
 ];
 
@@ -648,6 +651,78 @@ try {
         }
 
         $stdout('Nista nije upisano — ovo je samo predlog.');
+
+        exit(0);
+    }
+
+    // =====================================================================
+    // Plan upisa. Cita iz baze, ne zove AssetOPS i nista ne upisuje.
+    // =====================================================================
+    if ($command === 'assetops:plan') {
+        if ($integration->type !== IntegrationType::ASSETOPS) {
+            $stderr("Integracija {$id} nije AssetOPS.");
+            exit(1);
+        }
+
+        $assetOps  = new AssetOpsRepository($pdo);
+        $links     = new LinkRepository($pdo);
+        $inventory = new InventoryQuery($pdo);
+        $mapping   = $assetOps->mapping($integration->id);
+
+        foreach (FieldCatalog::ENTITY as $sourceKind => $entity) {
+            $cis = [];
+
+            foreach ($assetOps->ciByEntity($integration->id, $entity) as $ci) {
+                $cis[(string) $ci['uuid']] = $ci;
+            }
+
+            $types = [];
+
+            foreach ($assetOps->attributesForEntity($integration->id, $entity) as $attribute) {
+                $types[(string) $attribute['slug']] = (string) ($attribute['attribute_type'] ?? '');
+            }
+
+            $rows = array_values(iterator_to_array(
+                $sourceKind === FieldCatalog::KIND_VM
+                    ? $inventory->vmsForExport()
+                    : $inventory->hostsForExport(),
+                false
+            ));
+
+            $plan = Planner::plan(
+                $rows,
+                $links->bySourceKind($integration->id, $sourceKind),
+                $cis,
+                $assetOps->fieldMap($integration->id, $sourceKind),
+                $types,
+                $sourceKind,
+                $mapping[$sourceKind]['type_slug'] ?? null
+            );
+
+            $stdout(strtoupper($sourceKind));
+
+            foreach ($plan['counts'] as $label => $count) {
+                $stdout(sprintf('  %-12s %5d', $label, $count));
+            }
+
+            foreach ($plan['actions'] as $action) {
+                if ($action['action'] !== 'update') {
+                    continue;
+                }
+
+                foreach ($action['changes'] as $change) {
+                    $stdout(sprintf('  IZMENA  %-24s %-20s %s -> %s',
+                        (string) ($action['source']['name'] ?? '?'),
+                        $change['ref'],
+                        is_array($change['from']) ? implode('|', $change['from']) : (string) ($change['from'] ?? '(prazno)'),
+                        is_array($change['to']) ? implode('|', $change['to']) : (string) $change['to']));
+                }
+            }
+
+            $stdout();
+        }
+
+        $stdout('Nista nije upisano — ovo je samo plan.');
 
         exit(0);
     }
