@@ -59,6 +59,45 @@ $switchTo   = '/assetops';
     </div>
 </div>
 
+<?php
+// Redovi kojih više nema u AssetOPS-u. Ne brišu se sami: dok mapiranje još
+// pokazuje na njih, ovo je jedino mesto na kom se to vidi. Zato čišćenje
+// nije automatsko nego dugme, i zato preskače one koji su u upotrebi.
+// $stale je vec zauzeto zatvaracem iznad; ovo je spisak, ne provera.
+$vanished = $vanished ?? [];
+$inUse = array_values(array_filter($vanished, static fn (array $r): bool => $r['in_use'] === true));
+$free  = array_values(array_filter($vanished, static fn (array $r): bool => $r['in_use'] !== true));
+?>
+
+<?php if ($vanished !== []): ?>
+    <div class="panel">
+        <p class="note-block state-warn">
+            <?= $e(count($vanished)) ?> zapisa nije bilo u poslednjem prikupljanju — obrisani su u
+            AssetOPS-u. Ostaju ovde označeni, jer slug koji nestane ne sme tiho da ispadne iz
+            spiska na koji mapiranje pokazuje.
+            <?php if ($inUse !== []): ?>
+                <br>
+                Na <?= $e(count($inUse)) ?> od njih još pokazuje <a href="/assetops/mapping">Mapiranje</a>:
+                <?php foreach ($inUse as $row): ?>
+                    <span class="data"><?= $e($row['slug']) ?></span><?= $row === end($inUse) ? '' : ', ' ?>
+                <?php endforeach; ?>.
+                Ti se ne brišu dok se mapiranje ne promeni.
+            <?php endif; ?>
+        </p>
+
+        <?php if ($free !== []): ?>
+            <div class="form-actions">
+                <form method="post" action="/assetops/<?= $e($integration->id) ?>/clean">
+                    <input type="hidden" name="csrf" value="<?= $e($csrf) ?>">
+                    <button type="submit" class="btn btn-danger">
+                        Obriši nestale (<?= $e(count($free)) ?>)
+                    </button>
+                </form>
+            </div>
+        <?php endif; ?>
+    </div>
+<?php endif; ?>
+
 <?php if ($total === 0): ?>
     <div class="panel">
         <div class="empty">
