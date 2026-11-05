@@ -49,6 +49,7 @@ final class Vim25Client extends AbstractSoapClient implements ClientInterface
         'config.template',
         'config.version',
         'config.guestId',
+        'config.annotation',
         'config.hardware.numCPU',
         'config.hardware.numCoresPerSocket',
         'config.hardware.memoryMB',
@@ -438,6 +439,7 @@ final class Vim25Client extends AbstractSoapClient implements ClientInterface
             'name'        => $name,
             'power_state' => $power,
             'guest_OS'    => $this->val($xpath, $props['config.guestId'] ?? null, null),
+            'notes'       => $this->val($xpath, $props['config.annotation'] ?? null, null),
             'is_template' => $this->boolVal($xpath, $props['config.template'] ?? null, null) === true,
 
             'identity' => [
