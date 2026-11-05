@@ -104,20 +104,34 @@ final class FieldCatalog
      *
      * Namerno su izostavljena polja koja su VEZE (status, location, vendor,
      * asset_type, rack): one se ne salju kao tekst nego kao slug, i biraju se
-     * u panelu Mapiranje iznad, gde postoji spisak dozvoljenih vrednosti.
+     * u redovima vrste "relation", gde postoji spisak dozvoljenih vrednosti.
      * Mapiranje slobodnog teksta na njih bi proizvelo slug koji ne postoji.
+     *
+     * Treci element je odakle vrednost dolazi:
+     *   source    iz kolone inventara (podrazumevano)
+     *   constant  rucno upisana vrednost — za polja kojima u vCenteru nema
+     *             parnjaka, kao sto je broj rek jedinica
+     *
+     * @var array<string, array<string, array{0: string, 1: string, 2: string}>>
      */
     private const NATIVE = [
         self::KIND_VM => [
-            'name'          => ['Naziv CI-ja', 'text'],
-            'serial_number' => ['Serijski broj', 'text'],
-            'description'   => ['Opis', 'text'],
+            'name'          => ['Naziv CI-ja', 'text', 'source'],
+            'serial_number' => ['Serijski broj', 'text', 'source'],
+            'description'   => ['Opis', 'text', 'source'],
         ],
         self::KIND_HOST => [
-            'name'                => ['Naziv CI-ja', 'text'],
-            'serial_number'       => ['Serijski broj', 'text'],
-            'internal_identifier' => ['Interni identifikator', 'text'],
-            'description'         => ['Opis', 'text'],
+            'name'                => ['Naziv CI-ja', 'text', 'source'],
+            'serial_number'       => ['Serijski broj', 'text', 'source'],
+            'internal_identifier' => ['Interni identifikator', 'text', 'source'],
+            'description'         => ['Opis', 'text', 'source'],
+            // Broj rek jedinica koje server zauzima. vCenter to ne zna, pa se
+            // upisuje rukom. Swagger ga navodi kao obavezan pri kreiranju
+            // opreme, ali po iskustvu sa instancom nije — kao ni vendor,
+            // status i tags, koje ista sema takodje trazi a server ih ne
+            // zahteva. Zato stoji kao i svako drugo polje, sa pravilom
+            // "ne diraj" dok se ne podesi.
+            'units_required'      => ['Rek jedinica', 'int', 'constant'],
         ],
     ];
 
@@ -210,7 +224,7 @@ final class FieldCatalog
     }
 
     /**
-     * @return array<string, array{0: string, 1: string}> polje => [opis, tip]
+     * @return array<string, array{0: string, 1: string, 2: string}> polje => [opis, tip, odakle]
      */
     public static function nativeFields(string $sourceKind): array
     {
