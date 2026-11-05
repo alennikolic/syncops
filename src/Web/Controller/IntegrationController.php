@@ -10,6 +10,7 @@ namespace SyncOps\Web\Controller;
 
 use SyncOps\Integration\Integration;
 use SyncOps\Integration\IntegrationRepository;
+use SyncOps\Integration\IntegrationType;
 use SyncOps\Run\DiscoveryRunner;
 use SyncOps\Run\RunStatus;
 use SyncOps\Source\VCenter\ConnectionTester;
@@ -20,12 +21,10 @@ use Throwable;
 
 final class IntegrationController
 {
-    private const FLAVORS = [
-        Integration::FLAVOR_AUTO        => 'Prepoznaj sam (REST)',
-        Integration::FLAVOR_API_V2      => 'REST /api — vSphere 7.0 U2 i noviji',
-        Integration::FLAVOR_REST_LEGACY => 'REST /rest — vSphere 6.7 do 7.0',
-        Integration::FLAVOR_SOAP        => 'SOAP /sdk — sve verzije, potpun inventar',
-    ];
+    // Dijalekti vise ne stoje ovde nego u IntegrationType, po tipu
+    // integracije. U ovoj fazi se dodaje samo vCenter, pa forma radi sa
+    // njegovim vokabularom; kada stignu drugi izvori, tip ce birati korisnik.
+    private const TYPE = IntegrationType::VCENTER;
 
     public function __construct(
         private readonly IntegrationRepository $repo,
@@ -288,7 +287,7 @@ final class IntegrationController
             'title'       => $integration === null ? 'Nova integracija' : 'Izmena integracije',
             'nav'         => 'integrations',
             'integration' => $integration,
-            'flavors'     => self::FLAVORS,
+            'flavors'     => IntegrationType::flavors($integration?->type ?? self::TYPE),
             'errors'      => $errors,
             'csrf'        => $this->auth->csrfToken(),
             'value'       => $this->values($integration, $input),
@@ -309,7 +308,8 @@ final class IntegrationController
             'hostname'    => $input['hostname']    ?? $integration?->hostname   ?? '',
             'port'        => $input['port']        ?? (string) ($integration?->port ?? 443),
             'username'    => $input['username']    ?? $integration?->username   ?? '',
-            'api_flavor'  => $input['api_flavor']  ?? $integration?->apiFlavor  ?? Integration::FLAVOR_AUTO,
+            'api_flavor'  => $input['api_flavor']  ?? $integration?->apiFlavor
+                                                   ?? IntegrationType::defaultFlavor(self::TYPE),
             'verify_peer' => $input['verify_peer'] ?? (($integration?->verifyPeer ?? false) ? '1' : '0'),
         ];
     }
@@ -365,8 +365,10 @@ final class IntegrationController
             $errors[] = 'Unesi lozinku servisnog naloga.';
         }
 
-        if (!array_key_exists($input['api_flavor'], self::FLAVORS)) {
-            $errors[] = 'Izaberi verziju API-ja sa liste.';
+        // Provera je sada vezana za tip: ne pita samo da li dijalekt postoji,
+        // nego da li vazi za ovu vrstu integracije.
+        if (!IntegrationType::isValidFlavor(self::TYPE, $input['api_flavor'])) {
+            $errors[] = 'Izaberi protokol sa liste.';
         }
 
         return $errors;
