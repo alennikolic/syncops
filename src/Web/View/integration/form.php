@@ -76,8 +76,12 @@ $action = $isNew ? '/integrations' : '/integrations/' . $integration->id;
         </div>
 
         <div class="field">
-            <label for="api_flavor">Verzija API-ja</label>
-            <span class="hint">Ostavi na „prepoznaj sam” osim ako znaš da detekcija ne radi.</span>
+            <label for="api_flavor">Protokol</label>
+            <span class="hint">
+                REST je jednostavniji, ali ne vraća VM templejte i traži poziv po mašini.
+                SOAP vraća ceo inventar u jednom pozivu i jedini daje hardver hostova.
+                Između REST dijalekata ostavi „prepoznaj sam”; SOAP se bira svesno.
+            </span>
             <select id="api_flavor" name="api_flavor">
                 <?php foreach ($flavors as $key => $label): ?>
                     <option value="<?= $e($key) ?>" <?= $value['api_flavor'] === $key ? 'selected' : '' ?>>
