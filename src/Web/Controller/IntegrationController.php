@@ -287,7 +287,7 @@ final class IntegrationController
             'title'       => $integration === null ? 'Nova integracija' : 'Izmena integracije',
             'nav'         => 'integrations',
             'integration' => $integration,
-            'flavors'     => IntegrationType::flavors($integration?->type ?? self::TYPE),
+            'flavors'     => IntegrationType::flavorGroups($integration?->type ?? self::TYPE),
             'errors'      => $errors,
             'csrf'        => $this->auth->csrfToken(),
             'value'       => $this->values($integration, $input),
