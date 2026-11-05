@@ -178,6 +178,14 @@ final class AssetOpsRepository
     {
         $matching = [];
 
+        // Atribut obrisan u AssetOPS-u ne nestaje iz nase tabele — redovi se
+        // ne brisu. Prepoznaje se po tome sto mu last_seen zaostaje za
+        // ostalima iste vrste, isto kao i svuda drugde. Prikaz ga onda moze
+        // oznaciti umesto da ga tiho izostavi, a sloj upisa da ga zaobidje:
+        // upis u atribut kog vise nema ne bi prosao, a ako je bas on kljuc
+        // spajanja, posledica je gora od greske pri upisu.
+        $fresh = $this->lastSeenByKind($integrationId)['eav_attribute'] ?? null;
+
         foreach ($this->byKind($integrationId, 'eav_attribute') as $row) {
             $payload = json_decode((string) $row['payload'], true);
 
@@ -198,6 +206,8 @@ final class AssetOpsRepository
             $row['possible_values'] = is_array($payload['possible_select_values'] ?? null)
                 ? $payload['possible_select_values']
                 : [];
+
+            $row['missing'] = $fresh !== null && (string) $row['last_seen'] < $fresh;
 
             $matching[] = $row;
         }
