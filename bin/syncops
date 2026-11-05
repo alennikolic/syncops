@@ -67,6 +67,7 @@ use SyncOps\Core\Migrator;
 use SyncOps\Core\Secret;
 use SyncOps\Integration\Integration;
 use SyncOps\Integration\IntegrationRepository;
+use SyncOps\Integration\IntegrationType;
 use SyncOps\Run\DiscoveryRunner;
 use SyncOps\Run\RunRepository;
 use SyncOps\Run\RunStatus;
@@ -417,14 +418,10 @@ try {
             exit(1);
         }
 
-        $stdout();
-        $stdout('Dijalekt API-ja: auto (preporuceno), rest_legacy (6.7-7.0), api_v2 (7.0U2+)');
-        $flavor = $ask('Dijalekt', Integration::FLAVOR_AUTO);
-
-        if (!in_array($flavor, [Integration::FLAVOR_AUTO, Integration::FLAVOR_REST_LEGACY, Integration::FLAVOR_API_V2], true)) {
-            $stderr("Nepoznat dijalekt: {$flavor}");
-            exit(1);
-        }
+        // vCenter se cita iskljucivo preko vim25 (/sdk), pa se dijalekt vise
+        // ne pita. Kada neki tip integracije bude imao vise nacina povezivanja,
+        // IntegrationType ce ih prijaviti i pitanje se vraca.
+        $flavor = IntegrationType::defaultFlavor(IntegrationType::VCENTER);
 
         $verifyPeer = $askYesNo('Proveravati TLS sertifikat?', false);
 
