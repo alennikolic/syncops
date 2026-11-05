@@ -17,6 +17,7 @@ final class Integration
     public const FLAVOR_AUTO        = 'auto';
     public const FLAVOR_REST_LEGACY = 'rest_legacy';   // /rest    (6.7 - 7.0)
     public const FLAVOR_API_V2      = 'api_v2';        // /api     (7.0U2+)
+    public const FLAVOR_SOAP        = 'soap';          // /sdk     (vim25, sve verzije)
 
     public function __construct(
         public readonly int $id,
@@ -77,8 +78,19 @@ final class Integration
     }
 
     /**
+     * Govori li ova integracija SOAP-om, umesto REST-om.
+     */
+    public function usesSoap(): bool
+    {
+        return $this->effectiveFlavor() === self::FLAVOR_SOAP;
+    }
+
+    /**
      * Dijalekt koji treba stvarno koristiti: rucno podesen ako nije "auto",
      * inace poslednji detektovani. NULL znaci da detekcija jos nije radjena.
+     *
+     * "auto" se odnosi samo na REST dijalekte — SOAP se bira svesno, jer nije
+     * stvar verzije vCentera nego odluke kako se prikuplja.
      */
     public function effectiveFlavor(): ?string
     {
