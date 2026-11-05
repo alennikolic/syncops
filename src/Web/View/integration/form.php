@@ -78,9 +78,8 @@ $action = $isNew ? '/integrations' : '/integrations/' . $integration->id;
         <div class="field">
             <label for="api_flavor">Protokol</label>
             <span class="hint">
-                REST je jednostavniji, ali ne vraća VM templejte i traži poziv po mašini.
-                SOAP vraća ceo inventar u jednom pozivu i jedini daje hardver hostova.
-                Između REST dijalekata ostavi „prepoznaj sam”; SOAP se bira svesno.
+                Između REST dijalekata ostavi „prepoznaj sam” — razlika je u verziji vCentera.
+                SOAP se bira svesno: nije stvar verzije nego načina prikupljanja.
             </span>
             <select id="api_flavor" name="api_flavor">
                 <?php foreach ($flavors as $key => $label): ?>
