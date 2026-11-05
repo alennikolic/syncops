@@ -21,9 +21,10 @@ use Throwable;
 final class IntegrationController
 {
     private const FLAVORS = [
-        Integration::FLAVOR_AUTO        => 'Prepoznaj sam',
-        Integration::FLAVOR_API_V2      => '/api — vSphere 7.0 U2 i noviji',
-        Integration::FLAVOR_REST_LEGACY => '/rest — vSphere 6.7 do 7.0',
+        Integration::FLAVOR_AUTO        => 'Prepoznaj sam (REST)',
+        Integration::FLAVOR_API_V2      => 'REST /api — vSphere 7.0 U2 i noviji',
+        Integration::FLAVOR_REST_LEGACY => 'REST /rest — vSphere 6.7 do 7.0',
+        Integration::FLAVOR_SOAP        => 'SOAP /sdk — sve verzije, potpun inventar',
     ];
 
     public function __construct(
