@@ -154,7 +154,7 @@ $total = array_sum(array_map('count', $tables));
 // -----------------------------------------------------------------
 // Mapiranje
 // -----------------------------------------------------------------
-$fields = [
+$mapPanels = [
     'vm' => [
         'naslov'  => 'Virtuelne mašine',
         'opis'    => 'Mašina iz vCentera postaje virtual-asset u AssetOPS-u.',
@@ -187,7 +187,7 @@ $select = static function (string $name, array $choices, ?string $selected) use 
     <input type="hidden" name="csrf" value="<?= $e($csrf) ?>">
 
     <div class="detail-grid">
-        <?php foreach ($fields as $kind => $spec):
+        <?php foreach ($mapPanels as $kind => $spec):
             $current = $mapping[$kind];
         ?>
             <section class="panel">
@@ -241,6 +241,128 @@ $select = static function (string $name, array $choices, ?string $selected) use 
         <button type="submit" class="btn btn-primary">Sačuvaj mapiranje</button>
     </div>
 </form>
+
+<?php
+// -----------------------------------------------------------------
+// Polja i atributi
+// -----------------------------------------------------------------
+/** @var array<string, list<array<string,mixed>>> $fields */
+/** @var array<string, array<string, array<string,string>>> $sourceGroups */
+/** @var array<string, string> $policies */
+
+$sourceSelect = static function (string $kind, array $row, array $groups) use ($e): string {
+    $html = '<select name="map[' . $e($kind) . '][' . $e($row['ref']) . '][source]">'
+          . '<option value="">— ne puni se —</option>';
+
+    foreach ($groups as $group => $columns) {
+        $html .= '<optgroup label="' . $e($group) . '">';
+
+        foreach ($columns as $column => $label) {
+            $html .= '<option value="' . $e($column) . '"'
+                   . ($row['source_field'] === $column ? ' selected' : '') . '>'
+                   . $e($label) . '</option>';
+        }
+
+        $html .= '</optgroup>';
+    }
+
+    return $html . '</select>';
+};
+
+$policySelect = static function (string $kind, array $row, array $policies) use ($e): string {
+    $html = '<select name="map[' . $e($kind) . '][' . $e($row['ref']) . '][policy]">';
+
+    foreach ($policies as $value => $label) {
+        $html .= '<option value="' . $e($value) . '"'
+               . ($row['write_policy'] === $value ? ' selected' : '') . '>'
+               . $e($label) . '</option>';
+    }
+
+    return $html . '</select>';
+};
+
+$blocks = [
+    'vm'   => ['Virtuelne mašine', 'Ključ spajanja je po pravilu instance_uuid — ne menja se pri preimenovanju, vMotion-u ni reinstalaciji gosta.'],
+    'host' => ['ESXi hostovi', 'Ključ spajanja je hardware_uuid — ne zavisi od toga kako proizvođač prijavljuje serijski broj.'],
+];
+?>
+
+<h2 class="section-head">Polja i atributi</h2>
+
+<form method="post" action="/assetops/<?= $e($integration->id) ?>/fields">
+    <input type="hidden" name="csrf" value="<?= $e($csrf) ?>">
+
+    <?php foreach ($blocks as $kind => [$naslov, $opis]):
+        $rows = $fields[$kind] ?? [];
+    ?>
+        <h3 class="section-head" style="font-size:15px"><?= $e($naslov) ?></h3>
+
+        <div class="panel table-scroll">
+            <?php if ($rows === []): ?>
+                <div class="empty">
+                    <p>Nema ciljnih polja. Prikupi referentne podatke da bi se učitale definicije atributa.</p>
+                </div>
+            <?php else: ?>
+                <p class="hint" style="margin:0 0 10px"><?= $e($opis) ?></p>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Polje u AssetOPS-u</th>
+                            <th>Tip</th>
+                            <th>Puni se iz vCentera</th>
+                            <th>Pravilo</th>
+                            <th>Ključ spajanja</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    <?php foreach ($rows as $row): ?>
+                        <tr>
+                            <td class="rail <?= $row['is_correlation'] ? 'rail-ok' : ($row['write_policy'] === 'never' ? 'rail-idle' : 'rail-warn') ?> stacked">
+                                <span><?= $e($row['label']) ?></span>
+                                <span class="sub data"><?= $e($row['key']) ?></span>
+                            </td>
+                            <td>
+                                <span class="tag"><?= $e($row['kind'] === 'eav' ? 'atribut' : 'nativno') ?></span>
+                                <?php if ($row['type'] !== ''): ?>
+                                    <span class="sub data muted"><?= $e($row['type']) ?></span>
+                                <?php endif; ?>
+                            </td>
+                            <td><?= $sourceSelect($kind, $row, $sourceGroups[$kind] ?? []) ?></td>
+                            <td><?= $policySelect($kind, $row, $policies) ?></td>
+                            <td>
+                                <?php /* Samo EAV atribut moze da nosi kljuc: nativnog polja za
+                                         instance_uuid u AssetOPS-u nema. */ ?>
+                                <?php if ($row['kind'] === 'eav'): ?>
+                                    <label class="check">
+                                        <input type="radio" name="corr[<?= $e($kind) ?>]"
+                                               value="<?= $e($row['ref']) ?>"
+                                               <?= $row['is_correlation'] ? 'checked' : '' ?>>
+                                        ključ
+                                    </label>
+                                <?php else: ?>
+                                    <span class="muted">—</span>
+                                <?php endif; ?>
+                            </td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+    <?php endforeach; ?>
+
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Sačuvaj polja</button>
+    </div>
+</form>
+
+<p class="note-block">
+    Ključ spajanja se uvek upisuje <b>samo pri kreiranju</b>, bez obzira na izabrano pravilo —
+    vrednost po kojoj se CI prepoznaje ne sme da se menja. Najviše jedan ključ po vrsti.
+    AssetOPS ne ume da filtrira po EAV vrednosti, pa se spajanje radi čitanjem svih CI-jeva i
+    poređenjem lokalno; atribut je trajno sidro, a ne brz put do zapisa.
+</p>
 
 <p class="note-block">
     Veze se u AssetOPS šalju kao <b>slugovi</b>, ne kao imena. Zato uz svako ime stoji i slug —
