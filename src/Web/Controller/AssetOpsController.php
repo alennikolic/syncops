@@ -68,6 +68,10 @@ final class AssetOpsController
             'tables'       => $tables,
             'lastSeen'     => $this->repo->lastSeenByKind($selected->id),
             'mapping'      => $this->repo->mapping($selected->id),
+            'types'        => [
+                FieldCatalog::KIND_VM   => $this->repo->options($selected->id, 'virtual_asset_type'),
+                FieldCatalog::KIND_HOST => $this->repo->options($selected->id, 'asset_type'),
+            ],
             'fields'       => [
                 FieldCatalog::KIND_VM   => $this->targets($selected->id, FieldCatalog::KIND_VM),
                 FieldCatalog::KIND_HOST => $this->targets($selected->id, FieldCatalog::KIND_HOST),
@@ -138,46 +142,13 @@ final class AssetOpsController
         header('Location: /assetops?integration=' . $integration->id);
     }
 
-    public function saveMapping(string $id): void
-    {
-        $integration = $this->requireAssetOps($id);
-
-        if ($integration === null) {
-            return;
-        }
-
-        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
-            $this->flash->error('Sesija je istekla. Pokušaj ponovo.');
-            header('Location: /assetops');
-
-            return;
-        }
-
-        foreach (['vm', 'host'] as $sourceKind) {
-            $units = trim((string) ($_POST[$sourceKind . '_units_required'] ?? ''));
-
-            $this->repo->saveMapping(
-                integrationId: $integration->id,
-                sourceKind: $sourceKind,
-                typeSlug: trim((string) ($_POST[$sourceKind . '_type'] ?? '')),
-                locationSlug: trim((string) ($_POST[$sourceKind . '_location'] ?? '')),
-                visibilityGroups: array_values(array_filter(
-                    (array) ($_POST[$sourceKind . '_visibility_groups'] ?? []),
-                    static fn (mixed $v): bool => is_string($v) && $v !== ''
-                )),
-                // units_required postoji samo kod opreme.
-                unitsRequired: ($sourceKind === 'host' && $units !== '') ? (int) $units : null,
-            );
-        }
-
-        $this->flash->success('Mapiranje je sačuvano.');
-        header('Location: /assetops?integration=' . $integration->id);
-    }
-
     /**
-     * Snimi mapiranje polja i atributa za obe vrste izvora.
+     * Snimi ceo ekran mapiranja: tip CI-ja i sva polja, za obe vrste izvora.
+     *
+     * Jedna akcija a ne dve, jer je i obrazac jedan — tip i polja se biraju
+     * zajedno i nema smisla da se cuvaju odvojeno.
      */
-    public function saveFields(string $id): void
+    public function saveMapping(string $id): void
     {
         $integration = $this->requireAssetOps($id);
 
@@ -197,39 +168,89 @@ final class AssetOpsController
         $counted = 0;
 
         foreach ([FieldCatalog::KIND_VM, FieldCatalog::KIND_HOST] as $sourceKind) {
-            $rows = [];
+            $units = trim((string) ($_POST[$sourceKind . '_units_required'] ?? ''));
 
-            foreach ((array) ($sent[$sourceKind] ?? []) as $target => $values) {
-                // Kljuc forme je "vrsta:ime"; sve posle prve dvotacke je ime,
-                // jer slug sme da je sadrzi.
-                [$targetKind, $targetKey] = array_pad(explode(':', (string) $target, 2), 2, '');
+            $this->repo->saveMapping(
+                integrationId: $integration->id,
+                sourceKind: $sourceKind,
+                typeSlug: trim((string) ($_POST[$sourceKind . '_type'] ?? '')),
+                // Broj rek jedinica postoji samo kod opreme.
+                unitsRequired: ($sourceKind === FieldCatalog::KIND_HOST && $units !== '')
+                    ? (int) $units
+                    : null,
+            );
 
-                if ($targetKind === '' || $targetKey === '' || !is_array($values)) {
-                    continue;
-                }
-
-                $policy = (string) ($values['policy'] ?? 'never');
-
-                $rows[] = [
-                    'target_kind'    => $targetKind === 'eav' ? 'eav' : 'native',
-                    'target_key'     => $targetKey,
-                    'source_field'   => trim((string) ($values['source'] ?? '')),
-                    'constant_value' => trim((string) ($values['constant'] ?? '')),
-                    'write_policy'   => isset(FieldCatalog::POLICIES[$policy]) ? $policy : 'never',
-                    'is_correlation' => ((string) ($keys[$sourceKind] ?? '')) === (string) $target,
-                ];
-            }
+            $rows = $this->rowsFromForm(
+                (array) ($sent[$sourceKind] ?? []),
+                (string) ($keys[$sourceKind] ?? '')
+            );
 
             $this->repo->saveFieldMap($integration->id, $sourceKind, $rows);
 
-            $counted += count(array_filter(
-                $rows,
-                static fn (array $r): bool => $r['write_policy'] !== 'never' || $r['is_correlation']
-            ));
+            $counted += count($rows);
         }
 
-        $this->flash->success("Mapiranje polja je sačuvano — {$counted} podešenih.");
+        $this->flash->success("Mapiranje je sačuvano — {$counted} podešenih polja.");
         header('Location: /assetops?integration=' . $integration->id);
+    }
+
+    /**
+     * Redovi obrasca u oblik koji repozitorijum upisuje.
+     *
+     * @param array<string, mixed> $sent
+     * @return list<array<string, mixed>>
+     */
+    private function rowsFromForm(array $sent, string $correlationRef): array
+    {
+        $rows = [];
+
+        foreach ($sent as $target => $values) {
+            // Kljuc obrasca je "vrsta:ime"; sve posle prve dvotacke je ime,
+            // jer slug sme da je sadrzi.
+            [$targetKind, $targetKey] = array_pad(explode(':', (string) $target, 2), 2, '');
+
+            if (!in_array($targetKind, ['native', 'eav', 'relation'], true) || $targetKey === '' || !is_array($values)) {
+                continue;
+            }
+
+            $policy = (string) ($values['policy'] ?? 'never');
+
+            // Veza nosi fiksnu vrednost iz prikupljenog spiska, ne polje iz
+            // vCentera. Visestruka (visibility grupe) se cuva kao JSON niz.
+            $constant = '';
+            $source   = '';
+
+            if ($targetKind === 'relation') {
+                $fixed = $values['fixed'] ?? '';
+
+                $constant = is_array($fixed)
+                    ? (string) json_encode(array_values(array_filter(
+                        $fixed,
+                        static fn (mixed $v): bool => is_string($v) && $v !== ''
+                    )))
+                    : trim((string) $fixed);
+
+                if ($constant === '[]') {
+                    $constant = '';
+                }
+            } else {
+                $source = trim((string) ($values['source'] ?? ''));
+            }
+
+            $rows[] = [
+                'target_kind'    => $targetKind,
+                'target_key'     => $targetKey,
+                'source_field'   => $source,
+                'constant_value' => $constant,
+                'write_policy'   => isset(FieldCatalog::POLICIES[$policy]) ? $policy : 'never',
+                'is_correlation' => $correlationRef === (string) $target,
+            ];
+        }
+
+        return array_values(array_filter(
+            $rows,
+            static fn (array $r): bool => $r['write_policy'] !== 'never' || $r['is_correlation']
+        ));
     }
 
     // -----------------------------------------------------------------
@@ -244,6 +265,19 @@ final class AssetOpsController
     {
         $map  = $this->repo->fieldMap($integrationId, $sourceKind);
         $rows = [];
+
+        // Veze idu prve: bez lokacije i visibility grupe kreiranje CI-ja pada,
+        // pa treba da budu prvo sto se vidi.
+        foreach (FieldCatalog::relations($sourceKind) as $key => [$label, $listKind, $multi, $required]) {
+            $row = $this->target('relation', $key, $label, '', [], $map);
+
+            $row['options']  = $this->repo->options($integrationId, $listKind);
+            $row['multi']    = $multi;
+            $row['required'] = $required;
+            $row['fixed']    = $this->decodeFixed((string) ($row['constant_value'] ?? ''), $multi);
+
+            $rows[] = $row;
+        }
 
         foreach (FieldCatalog::nativeFields($sourceKind) as $key => [$label, $type]) {
             $rows[] = $this->target('native', $key, $label, $type, [], $map);
@@ -281,6 +315,10 @@ final class AssetOpsController
         return [
             'ref'             => $ref,
             'kind'            => $kind,
+            'options'         => [],
+            'multi'           => false,
+            'required'        => false,
+            'fixed'           => [],
             'key'             => $key,
             'label'           => $label,
             'type'            => $type,
@@ -290,6 +328,28 @@ final class AssetOpsController
             'write_policy'    => $current['write_policy'] ?? 'never',
             'is_correlation'  => $current['is_correlation'] ?? false,
         ];
+    }
+
+    /**
+     * Zapamcena vrednost veze: jedan slug, ili niz slugova kod visestruke.
+     *
+     * @return list<string>
+     */
+    private function decodeFixed(string $raw, bool $multi): array
+    {
+        if ($raw === '') {
+            return [];
+        }
+
+        if (!$multi) {
+            return [$raw];
+        }
+
+        $decoded = json_decode($raw, true);
+
+        return is_array($decoded)
+            ? array_values(array_map(strval(...), $decoded))
+            : [$raw];
     }
 
     /**
