@@ -53,6 +53,7 @@ use SyncOps\Run\RunRepository;
 use SyncOps\Source\VCenter\VCenterSource;
 use SyncOps\Storage\AssetOpsRepository;
 use SyncOps\Storage\InventoryQuery;
+use SyncOps\Storage\LinkRepository;
 use SyncOps\Storage\Maintenance;
 use SyncOps\Storage\RawStore;
 use SyncOps\Storage\SchemaQuery;
@@ -135,11 +136,14 @@ try {
 
         $dashboard   = new DashboardController($pdo, $repo, $view);
         $integration = new IntegrationController($repo, $view, $auth, $flash, $testers, $runner);
-        $inventory   = new InventoryController(new InventoryQuery($pdo), $view);
+        $inventoryQuery = new InventoryQuery($pdo);
+        $inventory   = new InventoryController($inventoryQuery, $view);
         $runs        = new RunController($pdo, $view);
         $assetOps    = new AssetOpsController(
             $repo,
             new AssetOpsRepository($pdo),
+            new LinkRepository($pdo),
+            $inventoryQuery,
             $view,
             $auth,
             $flash,
@@ -168,9 +172,12 @@ try {
         // se "mapping" procitalo kao identifikator integracije.
         $router->get('/assetops', $assetOps->index(...));
         $router->get('/assetops/ci', $assetOps->ci(...));
+        $router->get('/assetops/match', $assetOps->match(...));
         $router->get('/assetops/mapping', $assetOps->mapping(...));
         $router->post('/assetops/{id}/refresh', $assetOps->refresh(...));
         $router->post('/assetops/{id}/mapping', $assetOps->saveMapping(...));
+        $router->post('/assetops/{id}/match', $assetOps->saveLinks(...));
+        $router->post('/assetops/{id}/unlink', $assetOps->unlink(...));
         $router->get('/runs', $runs->index(...));
 
         // Pregled baze. Cita samo — nema unosa SQL-a ni izmena.
