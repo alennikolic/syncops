@@ -71,13 +71,21 @@ final class InventoryController
             return;
         }
 
+        $raw = $this->query->rawHistory(
+            (int) $host['integration_id'],
+            'host',
+            (string) $host['moref']
+        );
+
         $this->view->render('inventory/host', [
-            'title'    => (string) $host['name'],
-            'nav'      => 'hosts',
-            'host'     => $host,
-            'vms'      => $this->query->vmsOnHost((int) $host['integration_id'], (string) $host['moref']),
-            'changes'  => $this->query->hostChanges((int) $host['id']),
-            'lastRuns' => $this->query->lastSuccessfulRuns(),
+            'title'     => (string) $host['name'],
+            'nav'       => 'hosts',
+            'host'      => $host,
+            'vms'       => $this->query->vmsOnHost((int) $host['integration_id'], (string) $host['moref']),
+            'changes'   => $this->query->hostChanges((int) $host['id']),
+            'lastRuns'  => $this->query->lastSuccessfulRuns(),
+            'raw'       => $raw,
+            'rawLatest' => $raw === [] ? null : $this->query->rawPayload((int) $raw[0]['id']),
         ]);
     }
 
@@ -256,12 +264,20 @@ final class InventoryController
             return;
         }
 
+        $raw = $this->query->rawHistory(
+            (int) $vm['integration_id'],
+            'vm',
+            (string) $vm['moref']
+        );
+
         $this->view->render('inventory/vm', [
-            'title'    => (string) $vm['name'],
-            'nav'      => 'vms',
-            'vm'       => $vm,
-            'changes'  => $this->query->vmChanges((int) $vm['id']),
-            'lastRuns' => $this->query->lastSuccessfulRuns(),
+            'title'     => (string) $vm['name'],
+            'nav'       => 'vms',
+            'vm'        => $vm,
+            'changes'   => $this->query->vmChanges((int) $vm['id']),
+            'lastRuns'  => $this->query->lastSuccessfulRuns(),
+            'raw'       => $raw,
+            'rawLatest' => $raw === [] ? null : $this->query->rawPayload((int) $raw[0]['id']),
         ]);
     }
 }
