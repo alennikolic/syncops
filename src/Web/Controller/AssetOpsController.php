@@ -26,6 +26,7 @@ use SyncOps\Storage\LinkRepository;
 use SyncOps\Sync\CiOverview;
 use SyncOps\Sync\FieldCatalog;
 use SyncOps\Sync\Matcher;
+use SyncOps\Sync\Planner;
 use SyncOps\Web\Auth;
 use SyncOps\Web\Flash;
 use SyncOps\Web\View;
@@ -263,6 +264,87 @@ final class AssetOpsController
         }
 
         return null;
+    }
+
+    /**
+     * Plan: šta bi se upisalo u AssetOPS. Ništa se ne upisuje.
+     *
+     * Poslednji ekran pre nego što SyncOPS prvi put nešto promeni u tuđem
+     * sistemu — i jedini na kom se greška u mapiranju vidi pre nego što
+     * postane 156 pogrešnih zapisa.
+     */
+    public function planView(): void
+    {
+        $selected = $this->selectedOrEmpty('assetops-plan');
+
+        if ($selected === null) {
+            return;
+        }
+
+        $mapping = $this->repo->mapping($selected->id);
+        $panels  = [];
+
+        foreach (FieldCatalog::ENTITY as $sourceKind => $entity) {
+            $cis = [];
+
+            foreach ($this->repo->ciByEntity($selected->id, $entity) as $ci) {
+                $cis[(string) $ci['uuid']] = $ci;
+            }
+
+            $types = [];
+
+            foreach ($this->repo->attributesForEntity($selected->id, $entity) as $attribute) {
+                $types[(string) $attribute['slug']] = (string) ($attribute['attribute_type'] ?? '');
+            }
+
+            $panels[$sourceKind] = Planner::plan(
+                inventory: $this->inventoryFor($sourceKind),
+                links: $this->links->bySourceKind($selected->id, $sourceKind),
+                cis: $cis,
+                fieldMap: $this->repo->fieldMap($selected->id, $sourceKind),
+                attributeTypes: $types,
+                sourceKind: $sourceKind,
+                typeSlug: $mapping[$sourceKind]['type_slug'] ?? null,
+            ) + [
+                'label'       => $sourceKind === FieldCatalog::KIND_VM ? 'Virtuelne mašine' : 'Hostovi',
+                'source_kind' => $sourceKind,
+                'labels'      => $this->targetLabels($selected->id, $sourceKind, $entity),
+            ];
+        }
+
+        $this->view->render('assetops/plan', [
+            'title'        => 'Plan',
+            'nav'          => 'assetops-plan',
+            'integrations' => $this->assetOpsIntegrations(),
+            'integration'  => $selected,
+            'panels'       => $panels,
+            'csrf'         => $this->auth->csrfToken(),
+        ]);
+    }
+
+    /**
+     * Ime cilja za prikaz: "native:name" → „Ime". Bez ovoga bi plan govorio
+     * slugovima, a čita ga čovek koji odlučuje.
+     *
+     * @return array<string, string>
+     */
+    private function targetLabels(int $integrationId, string $sourceKind, string $entity): array
+    {
+        $labels = [];
+
+        foreach (FieldCatalog::relations($sourceKind) as $key => [$label]) {
+            $labels['relation:' . $key] = $label;
+        }
+
+        foreach (FieldCatalog::nativeFields($sourceKind) as $key => [$label]) {
+            $labels['native:' . $key] = $label;
+        }
+
+        foreach ($this->repo->attributesForEntity($integrationId, $entity) as $attribute) {
+            $labels['eav:' . $attribute['slug']] = (string) $attribute['name'];
+        }
+
+        return $labels;
     }
 
     /**
