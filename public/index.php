@@ -177,6 +177,7 @@ try {
         $router->get('/assetops/mapping', $assetOps->mapping(...));
         $router->post('/assetops/{id}/refresh', $assetOps->refresh(...));
         $router->post('/assetops/{id}/mapping', $assetOps->saveMapping(...));
+        $router->post('/assetops/{id}/clean', $assetOps->cleanReference(...));
         $router->post('/assetops/{id}/match', $assetOps->saveLinks(...));
         $router->post('/assetops/{id}/unlink', $assetOps->unlink(...));
         $router->get('/runs', $runs->index(...));
