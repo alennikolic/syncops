@@ -573,3 +573,129 @@ select {
 @media (prefers-reduced-motion: reduce) {
     * { transition: none !important; animation: none !important; }
 }
+
+/* ---------------------------------------------------------------------
+ * Pregled baze
+ *
+ * Dijagnosticke stranice. Jedina razlika u odnosu na ostatak GUI-ja je u
+ * tome sto se vrednosti ne formatiraju, pa im i stil mora da bude
+ * neutralan: nista se ne boji po znacenju, jer znacenje ovde ne tumacimo.
+ * Boja nosi samo jednu informaciju — da vrednosti nema.
+ * ------------------------------------------------------------------ */
+
+/* NULL i prazan string moraju da se razlikuju na prvi pogled. */
+.cell-null {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--idle);
+    letter-spacing: .04em;
+}
+
+.cell-empty,
+.cell-hidden {
+    font-size: 12px;
+    color: var(--ink-soft);
+    font-style: italic;
+}
+
+.cell-more {
+    display: inline-block;
+    margin-left: 6px;
+    font-size: 11px;
+    color: var(--idle);
+    white-space: nowrap;
+}
+
+.tag {
+    display: inline-block;
+    margin-left: 6px;
+    padding: 0 6px;
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    font-size: 11px;
+    color: var(--ink-soft);
+}
+
+.hash { color: var(--ink-soft); }
+
+.col-comment {
+    max-width: 34ch;
+    font-size: 13px;
+    color: var(--ink-soft);
+}
+
+/* Tabela sa sirovim redovima ume da bude sira od ekrana — neka se pomera
+   vodoravno umesto da lomi vrednosti u neprepoznatljiv oblik. */
+.table-scroll { overflow-x: auto; }
+
+.raw-table { font-size: 13px; }
+.raw-table td { white-space: nowrap; vertical-align: top; }
+.raw-table th { white-space: nowrap; }
+
+.row-open { width: 1%; }
+.row-open a {
+    display: inline-block;
+    padding: 0 6px;
+    font-size: 16px;
+    line-height: 1;
+    color: var(--ink-soft);
+    text-decoration: none;
+}
+.row-open a:hover { color: var(--accent); }
+
+/* Pun sadrzaj kolone. Visok zapis se skroluje unutar svog okvira, da
+   stranica ostane upotrebljiva kad payload ima par stotina linija. */
+pre.raw-full {
+    margin: 0 0 8px;
+    padding: 10px 12px;
+    max-height: 26rem;
+    overflow: auto;
+    background: var(--surface-2);
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.5;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: var(--ink);
+}
+
+.json-view { margin-bottom: 8px; }
+.json-view summary {
+    cursor: pointer;
+    font-size: 13px;
+    color: var(--ink-soft);
+    padding: 2px 0;
+}
+.json-view summary:hover { color: var(--accent); }
+
+.row-table th {
+    width: 22%;
+    text-align: left;
+    vertical-align: top;
+    font-weight: 600;
+    padding-right: 16px;
+}
+.row-table th .sub {
+    display: block;
+    font-weight: 400;
+    font-size: 12px;
+}
+.row-table td { vertical-align: top; }
+
+.hint {
+    margin: 6px 0 0;
+    font-size: 13px;
+    color: var(--ink-soft);
+}
+
+@media (max-width: 860px) {
+    .col-comment { max-width: 24ch; }
+    .row-table th { width: auto; }
+    .row-table, .row-table tbody, .row-table tr, .row-table th, .row-table td {
+        display: block;
+        width: 100%;
+    }
+    .row-table th { padding: 10px 0 2px; border-bottom: 0; }
+}
