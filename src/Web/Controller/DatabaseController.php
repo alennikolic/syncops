@@ -13,7 +13,10 @@ declare(strict_types=1);
 
 namespace SyncOps\Web\Controller;
 
+use SyncOps\Storage\Maintenance;
 use SyncOps\Storage\SchemaQuery;
+use SyncOps\Web\Auth;
+use SyncOps\Web\Flash;
 use SyncOps\Web\View;
 
 final class DatabaseController
@@ -21,6 +24,9 @@ final class DatabaseController
     public function __construct(
         private readonly SchemaQuery $schema,
         private readonly View $view,
+        private readonly Maintenance $maintenance,
+        private readonly Auth $auth,
+        private readonly Flash $flash,
     ) {
     }
 
@@ -79,6 +85,52 @@ final class DatabaseController
             'columns'    => $this->schema->columns($table),
             'row'        => $row,
         ]);
+    }
+
+    /**
+     * Potvrda pre brisanja. Zasebna stranica, da se tacni brojevi vide pre
+     * nego sto se nesto obrise.
+     */
+    public function resetForm(): void
+    {
+        $this->view->render('database/reset', [
+            'title'     => 'Brisanje podataka',
+            'nav'       => 'database',
+            'clearable' => $this->maintenance->clearable(),
+            'preserved' => Maintenance::PRESERVED,
+            'busy'      => $this->maintenance->hasRunningJob(),
+            'csrf'      => $this->auth->csrfToken(),
+        ]);
+    }
+
+    public function reset(): void
+    {
+        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
+            $this->flash->error('Sesija je istekla. Pokušaj ponovo.');
+            header('Location: /db/reset');
+
+            return;
+        }
+
+        // Druga provera, ne samo ona na stranici potvrde: posao je mogao da
+        // krene izmedju prikaza i klika.
+        if ($this->maintenance->hasRunningJob()) {
+            $this->flash->error('Prikupljanje je u toku. Sačekaj da se završi pa pokušaj ponovo.');
+            header('Location: /db/reset');
+
+            return;
+        }
+
+        $cleared = $this->maintenance->clearCollected();
+        $rows    = array_sum($cleared);
+
+        $this->flash->success(sprintf(
+            'Obrisano %s redova iz %d tabela. Integracije su ostale.',
+            number_format($rows, 0, ',', '.'),
+            count($cleared)
+        ));
+
+        header('Location: /db');
     }
 
     private function notFound(string $back = '/db'): void
