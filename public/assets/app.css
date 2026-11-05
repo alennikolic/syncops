@@ -762,3 +762,20 @@ pre.raw-full {
     cursor: pointer;
 }
 .check input { margin-right: 6px; }
+
+/* Prikupljeni spiskovi se drze skupljeni: lokacija ume da bude na desetine i
+   inace bi pojele ceo ekran pre nego sto se stigne do mapiranja. */
+.ref-list { border-top: 1px solid var(--line); }
+.ref-list:first-child { border-top: 0; }
+.ref-list > summary {
+    cursor: pointer;
+    padding: 10px 2px;
+    font-weight: 600;
+    display: flex;
+    gap: 8px;
+    align-items: baseline;
+}
+.ref-list > summary:hover { color: var(--accent); }
+.ref-list > summary > .muted { font-weight: 400; font-size: 13px; }
+.ref-list[open] > summary { border-bottom: 1px solid var(--line); }
+.ref-list > .table-scroll { padding-bottom: 8px; }
