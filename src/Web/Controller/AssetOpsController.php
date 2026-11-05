@@ -21,8 +21,11 @@ use SyncOps\Source\AssetOps\CiCollector;
 use SyncOps\Source\AssetOps\ClientFactory;
 use SyncOps\Source\AssetOps\ReferenceCollector;
 use SyncOps\Storage\AssetOpsRepository;
+use SyncOps\Storage\InventoryQuery;
+use SyncOps\Storage\LinkRepository;
 use SyncOps\Sync\CiOverview;
 use SyncOps\Sync\FieldCatalog;
+use SyncOps\Sync\Matcher;
 use SyncOps\Web\Auth;
 use SyncOps\Web\Flash;
 use SyncOps\Web\View;
@@ -33,6 +36,8 @@ final class AssetOpsController
     public function __construct(
         private readonly IntegrationRepository $integrations,
         private readonly AssetOpsRepository $repo,
+        private readonly LinkRepository $links,
+        private readonly InventoryQuery $inventory,
         private readonly View $view,
         private readonly Auth $auth,
         private readonly Flash $flash,
@@ -164,6 +169,220 @@ final class AssetOpsController
             'panels'       => $panels,
             'csrf'         => $this->auth->csrfToken(),
         ]);
+    }
+
+    /**
+     * Spajanje: koji objekat iz vCentera odgovara kom CI-ju.
+     *
+     * Ekran ima vrednost i pre ijednog upisa — pokazuje koliko bi se
+     * kreiralo, koliko povezalo i gde spajanje nije sigurno. Ništa se ne
+     * upisuje u AssetOPS; jedino što nastaje su veze u našoj bazi.
+     */
+    public function match(): void
+    {
+        $selected = $this->selectedOrEmpty('assetops-match');
+
+        if ($selected === null) {
+            return;
+        }
+
+        $panels = [];
+
+        foreach (FieldCatalog::ENTITY as $sourceKind => $entity) {
+            $panels[$sourceKind] = $this->plan($selected->id, $sourceKind, $entity);
+        }
+
+        $this->view->render('assetops/match', [
+            'title'        => 'Spajanje',
+            'nav'          => 'assetops-match',
+            'integrations' => $this->assetOpsIntegrations(),
+            'integration'  => $selected,
+            'panels'       => $panels,
+            'csrf'         => $this->auth->csrfToken(),
+        ]);
+    }
+
+    /**
+     * Predlog spajanja za jednu vrstu izvora.
+     *
+     * @return array<string, mixed>
+     */
+    private function plan(int $integrationId, string $sourceKind, string $entity): array
+    {
+        $plan = Matcher::plan(
+            inventory: $this->inventoryFor($sourceKind),
+            cis: $this->repo->ciByEntity($integrationId, $entity),
+            links: $this->links->bySourceKind($integrationId, $sourceKind),
+            sourceField: $this->correlationSource($integrationId, $sourceKind),
+            weakFields: FieldCatalog::weakFields($sourceKind),
+        );
+
+        return $plan + [
+            'label'       => $sourceKind === FieldCatalog::KIND_VM
+                ? 'Virtuelne mašine'
+                : 'Hostovi',
+            'source_kind' => $sourceKind,
+            'correlation' => $this->correlationSource($integrationId, $sourceKind),
+        ];
+    }
+
+    /**
+     * Ceo inventar jedne vrste, bez straničenja.
+     *
+     * Spajanje mora da vidi sve: objekat koji nije u ovom spisku izgledao bi
+     * kao da ne postoji, pa bi sledeći korak predložio da se kreira.
+     *
+     * @return list<array<string, mixed>>
+     */
+    private function inventoryFor(string $sourceKind): array
+    {
+        return array_values(iterator_to_array(
+            $sourceKind === FieldCatalog::KIND_VM
+                ? $this->inventory->vmsForExport()
+                : $this->inventory->hostsForExport(),
+            false
+        ));
+    }
+
+    /**
+     * Kolona inventara koja nosi vrednost ključa spajanja.
+     *
+     * Čita se iz mapiranja: ključ je red označen kao takav, a njegov
+     * source_field je ono čime se puni. Ključ sa fiksnom vrednošću nema
+     * smisla — ista vrednost na svim objektima nije ključ — pa se takav red
+     * ignoriše.
+     */
+    private function correlationSource(int $integrationId, string $sourceKind): ?string
+    {
+        foreach ($this->repo->fieldMap($integrationId, $sourceKind) as $row) {
+            if (($row['is_correlation'] ?? false) === true) {
+                $field = (string) ($row['source_field'] ?? '');
+
+                return $field === '' ? null : $field;
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Napravi veze: sve jake odjednom, ili potvrđene slabe iz obrasca.
+     *
+     * Jedna akcija za oba, jer je razlika samo u tome odakle spisak dolazi.
+     * Jaka veza nastaje potvrđena — vrednost ključa je jednoznačna. Slaba
+     * nastaje tek kad je čovek izabere, i upravo zato ovaj ekran postoji.
+     */
+    public function saveLinks(string $id): void
+    {
+        $integration = $this->requireAssetOps($id);
+
+        if ($integration === null) {
+            return;
+        }
+
+        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
+            $this->flash->error('Sesija je istekla. Pokušaj ponovo.');
+            header('Location: /assetops/match');
+
+            return;
+        }
+
+        $sourceKind = (string) ($_POST['source_kind'] ?? '');
+
+        if (!isset(FieldCatalog::ENTITY[$sourceKind])) {
+            $this->flash->error('Nepoznata vrsta izvora.');
+            header('Location: /assetops/match');
+
+            return;
+        }
+
+        $plan     = $this->plan($integration->id, $sourceKind, FieldCatalog::ENTITY[$sourceKind]);
+        $chosen   = array_map(strval(...), (array) ($_POST['weak'] ?? []));
+        $wanted   = [];
+
+        // Predlog se ne uzima iz obrasca nego se ponovo izračuna, a iz
+        // obrasca dolazi samo izbor. Inače bi se u bazu moglo upisati bilo
+        // šta — a i predlog je mogao da zastari dok je stranica stajala
+        // otvorena.
+        foreach ($plan['strong'] as $strong) {
+            $wanted[] = [
+                'source_id'  => (int) $strong['source']['id'],
+                'ci_uuid'    => (string) $strong['ci']['uuid'],
+                'matched_by' => 'correlation',
+                'confirmed'  => true,
+            ];
+        }
+
+        foreach ($plan['weak'] as $weak) {
+            $ref = $weak['source']['id'] . ':' . $weak['ci']['uuid'];
+
+            if (!in_array($ref, $chosen, true)) {
+                continue;
+            }
+
+            $wanted[] = [
+                'source_id'  => (int) $weak['source']['id'],
+                'ci_uuid'    => (string) $weak['ci']['uuid'],
+                'matched_by' => (string) $weak['matched_by'],
+                'confirmed'  => true,
+            ];
+        }
+
+        if ($wanted === []) {
+            $this->flash->error('Ništa nije izabrano za povezivanje.');
+            header('Location: /assetops/match?integration=' . $integration->id);
+
+            return;
+        }
+
+        $result = $this->links->create($integration->id, $sourceKind, $wanted);
+
+        $message = "Povezano {$result['created']}.";
+
+        if ($result['skipped'] !== []) {
+            $message .= ' Preskočeno ' . count($result['skipped'])
+                      . ' — objekat ili CI je u međuvremenu već povezan.';
+        }
+
+        $this->flash->success($message);
+        header('Location: /assetops/match?integration=' . $integration->id);
+    }
+
+    /**
+     * Raskini jednu vezu.
+     */
+    public function unlink(string $id): void
+    {
+        $integration = $this->requireAssetOps($id);
+
+        if ($integration === null) {
+            return;
+        }
+
+        if (!$this->auth->verifyCsrf($_POST['csrf'] ?? null)) {
+            $this->flash->error('Sesija je istekla. Pokušaj ponovo.');
+            header('Location: /assetops/match');
+
+            return;
+        }
+
+        $sourceKind = (string) ($_POST['source_kind'] ?? '');
+        $sourceId   = (int) ($_POST['source_id'] ?? 0);
+
+        if (!isset(FieldCatalog::ENTITY[$sourceKind]) || $sourceId === 0) {
+            $this->flash->error('Nepoznata veza.');
+            header('Location: /assetops/match?integration=' . $integration->id);
+
+            return;
+        }
+
+        $this->flash->success(
+            $this->links->remove($integration->id, $sourceKind, $sourceId)
+                ? 'Veza je raskinuta. CI u AssetOPS-u nije diran.'
+                : 'Ta veza više ne postoji.'
+        );
+
+        header('Location: /assetops/match?integration=' . $integration->id);
     }
 
     /**
