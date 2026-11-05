@@ -17,9 +17,11 @@ use SyncOps\Integration\Integration;
 use SyncOps\Integration\IntegrationRepository;
 use SyncOps\Integration\IntegrationType;
 use SyncOps\Source\AssetOps\AssetOpsException;
+use SyncOps\Source\AssetOps\CiCollector;
 use SyncOps\Source\AssetOps\ClientFactory;
 use SyncOps\Source\AssetOps\ReferenceCollector;
 use SyncOps\Storage\AssetOpsRepository;
+use SyncOps\Sync\CiOverview;
 use SyncOps\Sync\FieldCatalog;
 use SyncOps\Web\Auth;
 use SyncOps\Web\Flash;
@@ -36,6 +38,7 @@ final class AssetOpsController
         private readonly Flash $flash,
         private readonly ClientFactory $factory = new ClientFactory(),
         private readonly ReferenceCollector $collector = new ReferenceCollector(),
+        private readonly CiCollector $cis = new CiCollector(),
     ) {
     }
 
@@ -106,6 +109,64 @@ final class AssetOpsController
     }
 
     /**
+     * Zateceno stanje u AssetOPS-u: koji CI-jevi tamo postoje.
+     *
+     * Ovo je cetvrti deo slike, uz inventar, referentne spiskove i mapiranje.
+     * Ima vrednost i pre ijednog upisa: vidi se koliko CI-jeva nosi nas kljuc
+     * spajanja, koliko ih je mapiranog tipa, i gde se te dve stvari ne
+     * poklapaju.
+     */
+    public function ci(): void
+    {
+        $selected = $this->selectedOrEmpty('assetops-ci');
+
+        if ($selected === null) {
+            return;
+        }
+
+        $mapping = $this->repo->mapping($selected->id);
+        $refs    = $this->repo->correlationRefs($selected->id);
+        $stats   = $this->repo->ciStats($selected->id);
+
+        $panels = [];
+
+        foreach (FieldCatalog::ENTITY as $sourceKind => $entity) {
+            $rows     = $this->repo->ciByEntity($selected->id, $entity);
+            $typeSlug = $mapping[$sourceKind]['type_slug'] ?? null;
+            $typeList = $this->repo->options(
+                $selected->id,
+                $sourceKind === FieldCatalog::KIND_VM ? 'virtual_asset_type' : 'asset_type'
+            );
+
+            $summary = CiOverview::summarize($rows, $typeSlug);
+
+            $panels[$sourceKind] = [
+                'entity'      => $entity,
+                'label'       => $sourceKind === FieldCatalog::KIND_VM
+                    ? 'Virtuelne mašine (virtual-asset)'
+                    : 'Fizička oprema (asset)',
+                'rows'        => $rows,
+                'stats'       => $stats[$entity] ?? null,
+                'type_slug'   => $typeSlug,
+                'type_name'   => $typeSlug === null ? null : ($typeList[$typeSlug] ?? $typeSlug),
+                'correlation' => $refs[$sourceKind] ?? null,
+                'counts'      => $summary['counts'],
+                'mismatched'  => $summary['mismatched'],
+                'duplicates'  => $this->repo->ciDuplicateKeys($selected->id, $entity),
+            ];
+        }
+
+        $this->view->render('assetops/ci', [
+            'title'        => 'CI-jevi u AssetOPS-u',
+            'nav'          => 'assetops-ci',
+            'integrations' => $this->assetOpsIntegrations(),
+            'integration'  => $selected,
+            'panels'       => $panels,
+            'csrf'         => $this->auth->csrfToken(),
+        ]);
+    }
+
+    /**
      * Izabrana AssetOPS integracija, ili prikaz praznog stanja.
      *
      * Vraca null kada nema nijedne — pozivalac tada samo izlazi, jer je
@@ -157,6 +218,24 @@ final class AssetOpsController
                 $parts[] = sprintf(
                     '%s %d%s',
                     $this->label($kind),
+                    $stats['seen'],
+                    $stats['new'] > 0 ? " (novo {$stats['new']})" : ''
+                );
+            }
+
+            // CI-jevi se citaju u istom prolazu. Referentni spiskovi su tek
+            // vokabular; bez zatecenog stanja odredista nema s cim da se
+            // poredi, pa dva dugmeta za dve polovine iste slike ne bi imala
+            // smisla.
+            //
+            // Kljuc spajanja se cita iz mapiranja PRE prikupljanja: tako se
+            // vrednost kljuca izvlaci u kolonu odmah, a ne naknadnim
+            // prolaskom kroz payload.
+            foreach ($this->cis->collect($client, $this->entityRefs($integration->id)) as $entity => $rows) {
+                $stats   = $this->repo->storeCi($integration->id, $entity, $rows);
+                $parts[] = sprintf(
+                    '%s %d%s',
+                    $this->label($entity),
                     $stats['seen'],
                     $stats['new'] > 0 ? " (novo {$stats['new']})" : ''
                 );
@@ -434,6 +513,26 @@ final class AssetOpsController
         return $integration;
     }
 
+    /**
+     * Kljuc spajanja po ENTITETU, kako ga CiCollector trazi.
+     *
+     * Mapiranje ga vodi po vrsti izvora (vm, host), a citanje po entitetu
+     * (virtual-asset, asset) — jedno u jedno, ali imena su razlicita.
+     *
+     * @return array<string, ?string>
+     */
+    private function entityRefs(int $integrationId): array
+    {
+        $refs    = $this->repo->correlationRefs($integrationId);
+        $byEntity = [];
+
+        foreach (FieldCatalog::ENTITY as $sourceKind => $entity) {
+            $byEntity[$entity] = $refs[$sourceKind] ?? null;
+        }
+
+        return $byEntity;
+    }
+
     private function label(string $kind): string
     {
         return [
@@ -442,6 +541,9 @@ final class AssetOpsController
             'visibility_group'   => 'grupe',
             'virtual_asset_type' => 'tipovi mašina',
             'asset_type'         => 'tipovi opreme',
+            'eav_attribute'      => 'atributi',
+            'virtual-asset'      => 'CI mašine',
+            'asset'              => 'CI opreme',
         ][$kind] ?? $kind;
     }
 }
