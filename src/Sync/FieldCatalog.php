@@ -121,6 +121,38 @@ final class FieldCatalog
         ],
     ];
 
+    /**
+     * Veze: polja ciju vrednost ne daje vCenter nego spisak iz AssetOPS-a.
+     *
+     * Salju se kao SLUG, a kod visibility grupa kao niz slugova. Zato se u
+     * tabeli ne nude izvorna polja iz vCentera nego prikupljene vrednosti —
+     * slobodan tekst bi dao slug koji ne postoji.
+     *
+     * "required" znaci da bez njega POST pada: CreateVirtualAsset trazi
+     * location i visibility_groups, CreateAsset jos i asset_type.
+     *
+     * Status NIJE obavezan, ali je ovde jer je prvo sto treba podesiti —
+     * novi CI bez statusa u CMDB-u izgleda nedovrseno.
+     *
+     * @var array<string, array{0: string, 1: string, 2: bool, 3: bool}>
+     *      polje => [opis, vrsta referentnog spiska, vise vrednosti, obavezno]
+     */
+    private const RELATIONS = [
+        'status'            => ['Status', 'status', false, false],
+        'location'          => ['Lokacija', 'location', false, true],
+        'visibility_groups' => ['Visibility grupe', 'visibility_group', true, true],
+    ];
+
+    /**
+     * @return array<string, array{0: string, 1: string, 2: bool, 3: bool}>
+     */
+    public static function relations(string $sourceKind): array
+    {
+        // Obe vrste CI-ja nose ista tri polja; razlika je samo u tome sto
+        // asset uz njih trazi i asset_type, koji se bira iznad tabele.
+        return self::RELATIONS;
+    }
+
     /** Pravila upisa, redom od najbezbednijeg. */
     public const POLICIES = [
         'never'       => 'ne diraj',
