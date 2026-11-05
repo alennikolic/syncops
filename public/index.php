@@ -36,8 +36,12 @@ use SyncOps\Core\Db;
 use SyncOps\Core\Secret;
 use SyncOps\Integration\IntegrationRepository;
 use SyncOps\Source\VCenter\Client\ClientFactory;
-use SyncOps\Source\VCenter\ConnectionTester;
+use SyncOps\Integration\IntegrationType;
+use SyncOps\Source\AssetOps\ClientFactory as AssetOpsClientFactory;
+use SyncOps\Source\AssetOps\ConnectionTester as AssetOpsTester;
+use SyncOps\Source\VCenter\ConnectionTester as VCenterTester;
 use SyncOps\Web\Auth;
+use SyncOps\Web\Controller\AssetOpsController;
 use SyncOps\Web\Controller\AuthController;
 use SyncOps\Web\Controller\DashboardController;
 use SyncOps\Web\Controller\DatabaseController;
@@ -47,6 +51,7 @@ use SyncOps\Web\Controller\RunController;
 use SyncOps\Run\DiscoveryRunner;
 use SyncOps\Run\RunRepository;
 use SyncOps\Source\VCenter\VCenterSource;
+use SyncOps\Storage\AssetOpsRepository;
 use SyncOps\Storage\InventoryQuery;
 use SyncOps\Storage\Maintenance;
 use SyncOps\Storage\RawStore;
@@ -109,7 +114,12 @@ try {
         $pdo   = Db::connect($config['db'], retries: 2);
         $repo  = new IntegrationRepository($pdo, new Secret($config['secret_key']));
 
-        $tester = new ConnectionTester($repo, new ClientFactory());
+        // Provera konekcije po tipu integracije. Mapa a ne grananje u
+        // kontroleru: nov tip se dodaje ovde jednim redom.
+        $testers = [
+            IntegrationType::VCENTER  => new VCenterTester($repo, new ClientFactory()),
+            IntegrationType::ASSETOPS => new AssetOpsTester($repo, new AssetOpsClientFactory()),
+        ];
 
         // GUI samo upisuje posao u red; izvrsava ga worker.
         $runner = new DiscoveryRunner(
@@ -124,9 +134,18 @@ try {
         );
 
         $dashboard   = new DashboardController($pdo, $repo, $view);
-        $integration = new IntegrationController($repo, $view, $auth, $flash, $tester, $runner);
+        $integration = new IntegrationController($repo, $view, $auth, $flash, $testers, $runner);
         $inventory   = new InventoryController(new InventoryQuery($pdo), $view);
         $runs        = new RunController($pdo, $view);
+        $assetOps    = new AssetOpsController(
+            $repo,
+            new AssetOpsRepository($pdo),
+            $view,
+            $auth,
+            $flash,
+            new AssetOpsClientFactory(),
+        );
+
         $database    = new DatabaseController(
             new SchemaQuery($pdo),
             $view,
@@ -144,6 +163,10 @@ try {
         $router->get('/hosts/export', $inventory->exportHosts(...));
         $router->get('/hosts/{id}', $inventory->host(...));
         $router->get('/clusters', $inventory->clusters(...));
+
+        $router->get('/assetops', $assetOps->index(...));
+        $router->post('/assetops/{id}/refresh', $assetOps->refresh(...));
+        $router->post('/assetops/{id}/mapping', $assetOps->saveMapping(...));
         $router->get('/runs', $runs->index(...));
 
         // Pregled baze. Cita samo — nema unosa SQL-a ni izmena.
@@ -158,6 +181,7 @@ try {
 
         $router->get('/integrations', $integration->index(...));
         $router->get('/integrations/new', $integration->createForm(...));
+        $router->get('/integrations/new/{type}', $integration->createForm(...));
         $router->post('/integrations', $integration->create(...));
         $router->get('/integrations/{id}/edit', $integration->editForm(...));
         $router->post('/integrations/{id}', $integration->update(...));
