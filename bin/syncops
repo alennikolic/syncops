@@ -74,7 +74,9 @@ use SyncOps\Run\RunStatus;
 use SyncOps\Run\Worker;
 use SyncOps\Source\VCenter\Client\ClientFactory;
 use SyncOps\Source\VCenter\CollectionResult;
-use SyncOps\Source\VCenter\ConnectionTester;
+use SyncOps\Source\AssetOps\ClientFactory as AssetOpsClientFactory;
+use SyncOps\Source\AssetOps\ConnectionTester as AssetOpsTester;
+use SyncOps\Source\VCenter\ConnectionTester as VCenterTester;
 use SyncOps\Source\VCenter\VCenterSource;
 use SyncOps\Storage\Maintenance;
 use SyncOps\Storage\RawStore;
@@ -531,10 +533,20 @@ try {
     }
 
     if ($command === 'integration:test') {
-        $stdout("Povezujem se na {$integration->baseUrl()} kao {$integration->username} ...");
+        $stdout(sprintf(
+            'Povezujem se na %s (%s)%s ...',
+            $integration->baseUrl(),
+            IntegrationType::label($integration->type),
+            $integration->username === '' ? '' : ' kao ' . $integration->username
+        ));
         $stdout();
 
-        $tester = new ConnectionTester($repo, new ClientFactory());
+        // Tester se bira po tipu, isto kao u GUI-ju.
+        $tester = match ($integration->type) {
+            IntegrationType::ASSETOPS => new AssetOpsTester($repo, new AssetOpsClientFactory()),
+            default                   => new VCenterTester($repo, new ClientFactory()),
+        };
+
         $result = $tester->test($integration);
 
         if (!$result->ok) {
@@ -546,8 +558,12 @@ try {
 
         $stdout('USPESNO');
         $stdout();
-        $stdout(sprintf('  dijalekt API-ja   %s', $result->flavor));
-        $stdout(sprintf('  verzija vCentera  %s', $result->productVersion ?? 'nedostupna (nalog nema prava na /appliance)'));
+        $stdout(sprintf('  protokol          %s', $result->flavor));
+
+        if ($result->productVersion !== null) {
+            $stdout(sprintf('  verzija           %s', $result->productVersion));
+        }
+
         $stdout(sprintf('  HTTP poziva       %d', $result->callCount));
         $stdout();
 
