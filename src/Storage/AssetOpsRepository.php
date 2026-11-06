@@ -40,6 +40,7 @@ final class AssetOpsRepository
         }
 
         $before = $this->slugs($integrationId, $kind);
+        $now    = $this->now();
 
         $stmt = $this->pdo->prepare(
             'INSERT INTO ao_reference
@@ -47,7 +48,7 @@ final class AssetOpsRepository
                  color, payload, first_seen, last_seen)
              VALUES
                 (:integration, :kind, :slug, :name, :parent, :depth, :position,
-                 :color, :payload, UTC_TIMESTAMP(), UTC_TIMESTAMP())
+                 :color, :payload, :now, :now)
              ON DUPLICATE KEY UPDATE
                 name        = VALUES(name),
                 parent_slug = VALUES(parent_slug),
@@ -55,7 +56,7 @@ final class AssetOpsRepository
                 position    = VALUES(position),
                 color       = VALUES(color),
                 payload     = VALUES(payload),
-                last_seen   = UTC_TIMESTAMP()'
+                last_seen   = VALUES(last_seen)'
         );
 
         foreach ($rows as $row) {
@@ -69,6 +70,7 @@ final class AssetOpsRepository
                 'position'    => $row['position'],
                 'color'       => $row['color'],
                 'payload'     => $row['payload'],
+                'now'         => $now,
             ]);
         }
 
@@ -527,19 +529,21 @@ final class AssetOpsRepository
         }
 
         $before = $this->ciUuids($integrationId, $entity);
+        $now    = $this->now();
 
         $stmt = $this->pdo->prepare(
             'INSERT INTO ao_ci
-                (integration_id, entity, uuid, name, type_slug, status_slug,
+                (integration_id, entity, uuid, name, description, type_slug, status_slug,
                  location_slug, serial_number, correlation_key, correlation_value,
                  payload, remote_updated_at, first_seen, last_seen)
              VALUES
-                (:integration, :entity, :uuid, :name, :type, :status,
+                (:integration, :entity, :uuid, :name, :description, :type, :status,
                  :location, :serial, :corr_key, :corr_value,
-                 :payload, :remote, UTC_TIMESTAMP(), UTC_TIMESTAMP())
+                 :payload, :remote, :now, :now)
              ON DUPLICATE KEY UPDATE
                 entity            = VALUES(entity),
                 name              = VALUES(name),
+                description       = VALUES(description),
                 type_slug         = VALUES(type_slug),
                 status_slug       = VALUES(status_slug),
                 location_slug     = VALUES(location_slug),
@@ -548,7 +552,7 @@ final class AssetOpsRepository
                 correlation_value = VALUES(correlation_value),
                 payload           = VALUES(payload),
                 remote_updated_at = VALUES(remote_updated_at),
-                last_seen         = UTC_TIMESTAMP()'
+                last_seen         = VALUES(last_seen)'
         );
 
         foreach ($rows as $row) {
@@ -557,6 +561,7 @@ final class AssetOpsRepository
                 'entity'      => $entity,
                 'uuid'        => $row['uuid'],
                 'name'        => $row['name'],
+                'description' => $row['description'] ?? null,
                 'type'        => $row['type_slug'],
                 'status'      => $row['status_slug'],
                 'location'    => $row['location_slug'],
@@ -565,6 +570,7 @@ final class AssetOpsRepository
                 'corr_value'  => $row['correlation_value'],
                 'payload'     => $row['payload'],
                 'remote'      => $row['remote_updated_at'],
+                'now'         => $now,
             ]);
         }
 
@@ -577,6 +583,26 @@ final class AssetOpsRepository
         }
 
         return ['new' => $new, 'seen' => count($rows)];
+    }
+
+    /**
+     * Jedno vreme za celu seriju upisa.
+     *
+     * Ranije je u SQL-u stajalo UTC_TIMESTAMP(), a MySQL tu funkciju racuna
+     * jednom PO NAREDBI, ne po transakciji. Posto se svaki red upisuje svojim
+     * execute()-om, serija od dvesta redova dobijala je vremena razvucena
+     * preko sekunde ili dve. Prikaz zatim uzima MAX(last_seen) kao „poslednje
+     * osvezavanje" i oboji sve ispod toga — pa su redovi upisani sekund ranije
+     * u istom prolazu izgledali kao da nisu vidjeni. Nasumicno, jer zavisi od
+     * toga da li je upis presao granicu sekunde.
+     *
+     * Cita se iz baze, a ne gmdate() iz PHP-a, da sat ostane jedan isti:
+     * poredjenje ide nad vrednostima koje je upisala baza, pa bi razlika
+     * izmedju kontejnera vratila isti kvar na druga vrata.
+     */
+    private function now(): string
+    {
+        return (string) $this->pdo->query('SELECT UTC_TIMESTAMP()')->fetchColumn();
     }
 
     /**
