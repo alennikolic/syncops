@@ -212,9 +212,10 @@ $staleCi = static function (array $row, ?array $stats): bool {
         neko promenio tip. Takav CI se umesto toga prijavi ovde.
         <br>
         Čita se ruta liste, ne detalji po zapisu: lista nosi i
-        <span class="data">attribute_values</span>, pa je dovoljna za spajanje.
-        <span class="data">description</span> postoji samo u detaljima i dolazi kasnije,
-        kada se bude poredilo.
+        <span class="data">attribute_values</span> i <span class="data">description</span>,
+        pa je dovoljna i za spajanje i za poređenje. Entitet koji neko polje u listi ne
+        vrati ostavlja tu kolonu praznom — zbog jednog polja se ne prelazi na detalje
+        po zapisu.
     </p>
 
 <?php endif; ?>
