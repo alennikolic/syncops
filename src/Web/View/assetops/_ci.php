@@ -1,9 +1,10 @@
 <?php
-// src/Web/View/assetops/ci.php
+// src/Web/View/assetops/_ci.php
 //
-// Zatečeno stanje u AssetOPS-u: koji CI-jevi tamo postoje.
+// Zatečeno stanje u AssetOPS-u: koji CI-jevi tamo postoje. Gornja polovina
+// stranice Zatečeno stanje; donju nosi _reference.php.
 //
-// Ekran ima vrednost i pre ijednog upisa, i to je njegov razlog da postoji.
+// Odeljak ima vrednost i pre ijednog upisa, i to je njegov razlog da postoji.
 // Pokazuje tri broja koja odlučuju da li sinhronizacija sme da počne: koliko
 // CI-jeva nosi naš ključ spajanja, koliko ih je mapiranog tipa, i gde se te
 // dve stvari ne poklapaju.
@@ -11,56 +12,31 @@
 // Neusklade stoje otvorene, spisak CI-jeva skupljen. Nalaz se gleda, inventar
 // se pregleda kad nekoga zanima.
 //
+// Partial: zaglavlje stranice, izbor integracije i dugme „Prikupi sada" su u
+// index.php, jer su zajednički za oba odeljka. $collected racuna index.php.
+//
 /** @var callable $e */
-/** @var list<\SyncOps\Integration\Integration> $integrations */
 /** @var \SyncOps\Integration\Integration $integration */
 /** @var array<string, array<string, mixed>> $panels svaki nosi counts, mismatched, duplicates */
-/** @var string $csrf */
-
-$switchTo = '/assetops/ci';
-
-$collected = 0;
-
-foreach ($panels as $panel) {
-    $collected += (int) $panel['counts']['total'];
-}
+/** @var int $collected */
 
 /** CI koji nije viđen u poslednjem osvežavanju ovog entiteta. */
-$stale = static function (array $row, ?array $stats): bool {
+$staleCi = static function (array $row, ?array $stats): bool {
     $max = $stats['last_seen'] ?? null;
 
     return $max !== null && (string) $row['last_seen'] < $max;
 };
 ?>
 
-<div class="page-head">
-    <div>
-        <h1>CI-jevi u AssetOPS-u</h1>
-        <p>
-            <?= $e($integration->name) ?> &middot;
-            <span class="data"><?= $e($integration->baseUrl()) ?></span> &middot;
-            <?= $e($collected) ?> zapisa
-        </p>
-    </div>
-    <div class="head-actions">
-        <?php require __DIR__ . '/_switcher.php'; ?>
-
-        <form method="post" action="/assetops/<?= $e($integration->id) ?>/refresh">
-            <input type="hidden" name="csrf" value="<?= $e($csrf) ?>">
-            <button type="submit" class="btn btn-primary">Prikupi sada</button>
-        </form>
-    </div>
-</div>
+<h2 class="section-head">CI-jevi u AssetOPS-u <span class="muted"><?= $e($collected) ?></span></h2>
 
 <?php if ($collected === 0): ?>
     <div class="panel">
-        <div class="empty">
-            <p>
-                Još nijedan CI nije pročitan. Klikni „Prikupi sada" — pročitaće se sve
-                virtuelne mašine i sva oprema iz AssetOPS-a, zajedno sa referentnim
-                spiskovima. Ceo entitet je jedna strana, pa traje sekund.
-            </p>
-        </div>
+        <p class="note-block">
+            Još nijedan CI nije pročitan. Klikni „Prikupi sada" — pročitaće se sve
+            virtuelne mašine i sva oprema iz AssetOPS-a, zajedno sa referentnim
+            spiskovima. Ceo entitet je jedna strana, pa traje sekund.
+        </p>
     </div>
 <?php else: ?>
 
@@ -68,7 +44,7 @@ $stale = static function (array $row, ?array $stats): bool {
         $counts = $panel['counts'];
         $stats  = $panel['stats'];
     ?>
-        <h2 class="section-head"><?= $e($panel['label']) ?></h2>
+        <h3 class="section-head"><?= $e($panel['label']) ?></h3>
 
         <div class="counts">
             <div class="count">
@@ -194,7 +170,7 @@ $stale = static function (array $row, ?array $stats): bool {
                         </thead>
                         <tbody>
                         <?php foreach ($panel['rows'] as $row):
-                            $missing = $stale($row, $stats);
+                            $missing = $staleCi($row, $stats);
                             $key     = $row['correlation_value'] ?? null;
                         ?>
                             <tr>
