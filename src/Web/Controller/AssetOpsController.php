@@ -53,7 +53,10 @@ final class AssetOpsController
     }
 
     /**
-     * Referentni spiskovi prikupljeni iz AssetOPS-a.
+     * Zateceno stanje u AssetOPS-u: zateceni CI-jevi i referentni spiskovi.
+     *
+     * Jedna stranica za oboje: dugme „Prikupi sada" ionako puni i jedno i
+     * drugo u istom prolazu, pa su dva ekrana bila dve polovine iste slike.
      */
     public function index(): void
     {
@@ -70,11 +73,12 @@ final class AssetOpsController
         }
 
         $this->view->render('assetops/index', [
-            'title'        => 'Referentni podaci',
+            'title'        => 'Zatečeno stanje',
             'vanished'     => $this->repo->staleReference($selected->id),
             'nav'          => 'assetops',
             'integrations' => $this->assetOpsIntegrations(),
             'integration'  => $selected,
+            'panels'       => $this->ciPanels($selected),
             'tables'       => $tables,
             'lastSeen'     => $this->repo->lastSeenByKind($selected->id),
             'csrf'         => $this->auth->csrfToken(),
@@ -120,32 +124,40 @@ final class AssetOpsController
     }
 
     /**
-     * Zateceno stanje u AssetOPS-u: koji CI-jevi tamo postoje.
+     * Stara adresa CI stranice. Odeljak je sada deo /assetops.
      *
-     * Ovo je cetvrti deo slike, uz inventar, referentne spiskove i mapiranje.
+     * Ruta ostaje da sacuvani link ne bi zavrsio na 404; izbor integracije
+     * se prenosi, pa se zatekne isti podatak.
+     */
+    public function ciRedirect(): void
+    {
+        $integration = (string) ($_GET['integration'] ?? '');
+
+        header('Location: /assetops' . ($integration === '' ? '' : '?integration=' . urlencode($integration)), true, 301);
+    }
+
+    /**
+     * Zateceni CI-jevi, po vrsti izvora — gornji odeljak stranice.
+     *
      * Ima vrednost i pre ijednog upisa: vidi se koliko CI-jeva nosi nas kljuc
      * spajanja, koliko ih je mapiranog tipa, i gde se te dve stvari ne
      * poklapaju.
+     *
+     * @return array<string, array<string, mixed>>
      */
-    public function ci(): void
+    private function ciPanels(Integration $integration): array
     {
-        $selected = $this->selectedOrEmpty('assetops-ci');
-
-        if ($selected === null) {
-            return;
-        }
-
-        $mapping = $this->repo->mapping($selected->id);
-        $refs    = $this->repo->correlationRefs($selected->id);
-        $stats   = $this->repo->ciStats($selected->id);
+        $mapping = $this->repo->mapping($integration->id);
+        $refs    = $this->repo->correlationRefs($integration->id);
+        $stats   = $this->repo->ciStats($integration->id);
 
         $panels = [];
 
         foreach (FieldCatalog::ENTITY as $sourceKind => $entity) {
-            $rows     = $this->repo->ciByEntity($selected->id, $entity);
+            $rows     = $this->repo->ciByEntity($integration->id, $entity);
             $typeSlug = $mapping[$sourceKind]['type_slug'] ?? null;
             $typeList = $this->repo->options(
-                $selected->id,
+                $integration->id,
                 $sourceKind === FieldCatalog::KIND_VM ? 'virtual_asset_type' : 'asset_type'
             );
 
@@ -163,18 +175,11 @@ final class AssetOpsController
                 'correlation' => $refs[$sourceKind] ?? null,
                 'counts'      => $summary['counts'],
                 'mismatched'  => $summary['mismatched'],
-                'duplicates'  => $this->repo->ciDuplicateKeys($selected->id, $entity),
+                'duplicates'  => $this->repo->ciDuplicateKeys($integration->id, $entity),
             ];
         }
 
-        $this->view->render('assetops/ci', [
-            'title'        => 'CI-jevi u AssetOPS-u',
-            'nav'          => 'assetops-ci',
-            'integrations' => $this->assetOpsIntegrations(),
-            'integration'  => $selected,
-            'panels'       => $panels,
-            'csrf'         => $this->auth->csrfToken(),
-        ]);
+        return $panels;
     }
 
     /**
