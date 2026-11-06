@@ -37,8 +37,7 @@ $nav = $nav ?? '';
             <a href="/clusters" <?= $nav === 'clusters' ? 'aria-current="page"' : '' ?>>Klasteri</a>
 
             <div class="nav-group">AssetOPS</div>
-            <a href="/assetops"         <?= $nav === 'assetops'         ? 'aria-current="page"' : '' ?>>Referentni podaci</a>
-            <a href="/assetops/ci"      <?= $nav === 'assetops-ci'      ? 'aria-current="page"' : '' ?>>CI-jevi</a>
+            <a href="/assetops"         <?= $nav === 'assetops'         ? 'aria-current="page"' : '' ?>>Zatečeno stanje</a>
             <a href="/assetops/mapping" <?= $nav === 'assetops-mapping' ? 'aria-current="page"' : '' ?>>Mapiranje</a>
             <a href="/assetops/match"   <?= $nav === 'assetops-match'   ? 'aria-current="page"' : '' ?>>Spajanje</a>
             <a href="/assetops/plan"    <?= $nav === 'assetops-plan'    ? 'aria-current="page"' : '' ?>>Plan</a>
