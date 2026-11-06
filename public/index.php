@@ -170,10 +170,10 @@ try {
         $router->get('/hosts/{id}', $inventory->host(...));
         $router->get('/clusters', $inventory->clusters(...));
 
-        // /assetops/mapping i /assetops/ci moraju PRE ruta sa {id}, inace bi
-        // se "mapping" procitalo kao identifikator integracije.
+        // Imenovane /assetops/* rute moraju PRE ruta sa {id}, inace bi se
+        // "mapping" procitalo kao identifikator integracije.
         $router->get('/assetops', $assetOps->index(...));
-        $router->get('/assetops/ci', $assetOps->ci(...));
+        $router->get('/assetops/ci', $assetOps->ciRedirect(...));
         $router->get('/assetops/match', $assetOps->match(...));
         $router->get('/assetops/plan', $assetOps->planView(...));
         $router->get('/assetops/mapping', $assetOps->mapping(...));
