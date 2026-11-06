@@ -48,7 +48,7 @@ final class AssetOpsRepository
                  color, payload, first_seen, last_seen)
              VALUES
                 (:integration, :kind, :slug, :name, :parent, :depth, :position,
-                 :color, :payload, :now, :now)
+                 :color, :payload, :first_seen, :last_seen)
              ON DUPLICATE KEY UPDATE
                 name        = VALUES(name),
                 parent_slug = VALUES(parent_slug),
@@ -70,7 +70,8 @@ final class AssetOpsRepository
                 'position'    => $row['position'],
                 'color'       => $row['color'],
                 'payload'     => $row['payload'],
-                'now'         => $now,
+                'first_seen'  => $now,
+                'last_seen'   => $now,
             ]);
         }
 
@@ -539,7 +540,7 @@ final class AssetOpsRepository
              VALUES
                 (:integration, :entity, :uuid, :name, :description, :type, :status,
                  :location, :serial, :corr_key, :corr_value,
-                 :payload, :remote, :now, :now)
+                 :payload, :remote, :first_seen, :last_seen)
              ON DUPLICATE KEY UPDATE
                 entity            = VALUES(entity),
                 name              = VALUES(name),
@@ -570,7 +571,8 @@ final class AssetOpsRepository
                 'corr_value'  => $row['correlation_value'],
                 'payload'     => $row['payload'],
                 'remote'      => $row['remote_updated_at'],
-                'now'         => $now,
+                'first_seen'  => $now,
+                'last_seen'   => $now,
             ]);
         }
 
