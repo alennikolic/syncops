@@ -323,6 +323,30 @@ final class InventoryQuery
     }
 
     // -----------------------------------------------------------------
+    // Licence
+    // -----------------------------------------------------------------
+
+    /**
+     * Licence sa svih vCentera.
+     *
+     * Redjaju se po isteku pa po imenu: ono sto istice prvo je ono zbog cega
+     * se na ovaj ekran i dolazi. Licence bez roka idu na kraj, jer NULL u
+     * rastucem poretku inace dolazi prvi.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function licenses(): array
+    {
+        return $this->pdo->query(
+            'SELECT l.*,
+                    i.name AS integration_name
+               FROM vc_license l
+               JOIN integration i ON i.id = l.integration_id
+              ORDER BY l.expires_at IS NULL, l.expires_at, i.name, l.name'
+        )->fetchAll();
+    }
+
+    // -----------------------------------------------------------------
     // Pomocno
     // -----------------------------------------------------------------
 
