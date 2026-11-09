@@ -47,7 +47,7 @@ final class DatastoreDto implements InventoryDto
             'capacity_bytes'       => $this->capacityBytes,
             'free_bytes'           => $this->freeBytes,
             'uncommitted_bytes'    => $this->uncommittedBytes,
-            'accessible'           => $this->accessible,
+            'is_accessible'        => $this->accessible,
             'multiple_host_access' => $this->multipleHostAccess,
             'maintenance_mode'     => $this->maintenanceMode,
             'overall_status'       => $this->overallStatus,
