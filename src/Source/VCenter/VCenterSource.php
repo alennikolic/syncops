@@ -14,6 +14,7 @@ use SensitiveParameter;
 use SyncOps\Integration\Integration;
 use SyncOps\Source\VCenter\Client\ClientFactory;
 use SyncOps\Source\VCenter\Collector\ClusterCollector;
+use SyncOps\Source\VCenter\Collector\DatastoreCollector;
 use SyncOps\Source\VCenter\Collector\HostCollector;
 use SyncOps\Source\VCenter\Collector\LicenseCollector;
 use SyncOps\Source\VCenter\Collector\VmCollector;
@@ -25,6 +26,7 @@ final class VCenterSource
         private readonly ClusterCollector $clusters = new ClusterCollector(),
         private readonly HostCollector $hosts = new HostCollector(),
         private readonly VmCollector $vms = new VmCollector(),
+        private readonly DatastoreCollector $datastores = new DatastoreCollector(),
         private readonly LicenseCollector $licenses = new LicenseCollector(),
     ) {
     }
@@ -70,6 +72,9 @@ final class VCenterSource
                     },
             );
 
+            $notify('datastore', 0, 0);
+            $datastores = $this->datastores->collect($client);
+
             // Licence idu posle inventara i namerno NE obaraju run: citanje
             // trazi pravo Global.Licenses, koje namenski nalog cesto nema.
             // Kada ga nema, kolektor vrati praznu listu i upozorenje.
@@ -82,6 +87,7 @@ final class VCenterSource
                 clusters: $found['clusters'],
                 hosts: $hosts,
                 vms: $vms,
+                datastores: $datastores,
                 licenses: $licenses,
                 failures: $this->vms->failures(),
                 // Inventar se ili procitao ili je run pukao. Jedino sto sme
