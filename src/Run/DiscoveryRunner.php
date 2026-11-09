@@ -22,6 +22,7 @@ use SyncOps\Source\VCenter\VCenterSource;
 use SyncOps\Storage\InventoryRepository;
 use SyncOps\Storage\RawStore;
 use SyncOps\Storage\Repository\ClusterRepository;
+use SyncOps\Storage\Repository\DatastoreRepository;
 use SyncOps\Storage\Repository\HostRepository;
 use SyncOps\Storage\Repository\LicenseRepository;
 use SyncOps\Storage\Repository\VmRepository;
@@ -39,6 +40,7 @@ final class DiscoveryRunner
         private readonly HostRepository $hosts,
         private readonly VmRepository $vms,
         private readonly LicenseRepository $licenses,
+        private readonly DatastoreRepository $datastores,
     ) {
     }
 
@@ -141,6 +143,7 @@ final class DiscoveryRunner
             // Licence na kraju: ne zavise ni od cega iznad, a kada ih nalog
             // ne sme citati lista je prazna i persist() prolazi bez posla.
             'licenses' => [$this->licenses, 'license', $result->licenses],
+            'datastores' => [$this->datastores, 'datastore', $result->datastores],
         ];
 
         $stats = [];
