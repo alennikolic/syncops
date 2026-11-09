@@ -42,6 +42,7 @@ abstract class AbstractSoapClient
     protected ?string $propertyCollector = null;
     protected ?string $sessionManager = null;
     protected ?string $viewManager = null;
+    protected ?string $licenseManager = null;
     protected ?string $productVersion = null;
 
     public function __construct(
@@ -118,6 +119,7 @@ abstract class AbstractSoapClient
         $this->propertyCollector = $this->text($xpath, '//*[local-name()="propertyCollector"]');
         $this->sessionManager    = $this->text($xpath, '//*[local-name()="sessionManager"]');
         $this->viewManager       = $this->text($xpath, '//*[local-name()="viewManager"]');
+        $this->licenseManager    = $this->text($xpath, '//*[local-name()="licenseManager"]');
         $this->productVersion    = $this->text($xpath, '//*[local-name()="about"]/*[local-name()="version"]');
 
         // SOAPAction mora da nosi verziju API-ja: bez nje vCenter za novije
@@ -200,6 +202,75 @@ abstract class AbstractSoapClient
         } finally {
             $this->destroyView($view);
         }
+    }
+
+    /**
+     * Procitaj polja JEDNOG, unapred poznatog objekta — bez ContainerView.
+     *
+     * Pogled postoji da bi se obislo mnogo objekata istog tipa. Singltoni kao
+     * LicenseManager se citaju direktno: pogled bi za jedan jedini objekat
+     * znacio dva poziva vise (CreateContainerView i DestroyView) i jedan
+     * TraversalSpec bez svrhe.
+     *
+     * Vraca DOMXPath nad celim odgovorom, a ne razlozene vrednosti, jer
+     * pozivalac zna oblik svog objekta — ovde se ne zna da li se cita jedno
+     * polje ili niz ugnezdjenih struktura.
+     *
+     * @param list<string> $properties
+     */
+    protected function retrieveObject(string $type, string $moref, array $properties): DOMXPath
+    {
+        $this->login();
+
+        $pathSet = '';
+
+        foreach ($properties as $property) {
+            $pathSet .= '<pathSet>' . $this->escape($property) . '</pathSet>';
+        }
+
+        return $this->xpath($this->http->call('RetrievePropertiesEx', sprintf(
+            '<RetrievePropertiesEx xmlns="urn:vim25">'
+            . '<_this type="PropertyCollector">%s</_this>'
+            . '<specSet>'
+            . '<propSet><type>%s</type>%s</propSet>'
+            . '<objectSet><obj type="%s">%s</obj><skip>false</skip></objectSet>'
+            . '</specSet>'
+            . '<options />'
+            . '</RetrievePropertiesEx>',
+            $this->escape((string) $this->propertyCollector),
+            $this->escape($type),
+            $pathSet,
+            $this->escape($type),
+            $this->escape($moref)
+        )));
+    }
+
+    /**
+     * Ime prava koje nalogu fali da bi procitao zadato polje, ili null kada
+     * je polje stiglo.
+     *
+     * vCenter na nedostatak prava NE odgovara greskom. Poziv uspe, a umesto
+     * vrednosti stigne <missingSet> sa imenom polja i prava:
+     *
+     *   <missingSet><path>licenses</path>
+     *     <fault><fault xsi:type="NoPermission">
+     *       <privilegeId>Global.Licenses</privilegeId>
+     *
+     * Bez ove provere pozivalac vidi prazan rezultat i ne zna da li objekat
+     * nema vrednost ili je nalog ne sme videti.
+     */
+    protected function missingPrivilege(DOMXPath $xpath, string $path): ?string
+    {
+        foreach ($xpath->query('//*[local-name()="missingSet"]') ?: [] as $missing) {
+            if ($this->text($xpath, './*[local-name()="path"]', $missing) !== $path) {
+                continue;
+            }
+
+            return $this->text($xpath, './/*[local-name()="privilegeId"]', $missing)
+                ?? 'nepoznato pravo';
+        }
+
+        return null;
     }
 
     /**
