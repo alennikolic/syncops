@@ -105,7 +105,7 @@ final class RunRepository
         int $found = 0,
         int $changed = 0,
     ): void {
-        if (!in_array($type, ['clusters', 'hosts', 'vms'], true)) {
+        if (!in_array($type, ['clusters', 'hosts', 'vms', 'licenses'], true)) {
             throw new RuntimeException("Nepoznat tip objekta: {$type}");
         }
 
