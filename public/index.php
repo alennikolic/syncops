@@ -59,6 +59,7 @@ use SyncOps\Storage\Maintenance;
 use SyncOps\Storage\RawStore;
 use SyncOps\Storage\SchemaQuery;
 use SyncOps\Storage\Repository\ClusterRepository;
+use SyncOps\Storage\Repository\HostDeviceRepository;
 use SyncOps\Storage\Repository\HostRepository;
 use SyncOps\Storage\Repository\DatastoreRepository;
 use SyncOps\Storage\Repository\LicenseRepository;
@@ -137,6 +138,7 @@ try {
             new VmRepository($pdo),
             new LicenseRepository($pdo),
             new DatastoreRepository($pdo),
+            new HostDeviceRepository($pdo),
         );
 
         $dashboard   = new DashboardController($pdo, $repo, $view);
