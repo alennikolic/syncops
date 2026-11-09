@@ -93,6 +93,7 @@ use SyncOps\Sync\Matcher;
 use SyncOps\Sync\Planner;
 use SyncOps\Storage\Repository\ClusterRepository;
 use SyncOps\Storage\Repository\HostRepository;
+use SyncOps\Storage\Repository\LicenseRepository;
 use SyncOps\Storage\Repository\VmRepository;
 use SyncOps\Web\Auth;
 
@@ -474,6 +475,7 @@ try {
         new ClusterRepository($pdo),
         new HostRepository($pdo),
         new VmRepository($pdo),
+        new LicenseRepository($pdo),
     );
 
     // --- worker -----------------------------------------------------------
@@ -1091,6 +1093,30 @@ try {
 
         unset($totalVms);
 
+        // ---------------------------------------------------------------
+        // Licence
+        // ---------------------------------------------------------------
+        $stdout();
+        $stdout('LICENCE (' . count($result->licenses) . ')');
+        $stdout(str_repeat('-', 72));
+
+        if ($result->licenses === []) {
+            $stdout('  nijedna — pogledaj napomene ispod');
+        }
+
+        foreach ($result->licenses as $l) {
+            $stdout(sprintf(
+                '  %-34s %-10s %s',
+                mb_strimwidth($l->name, 0, 33, '…'),
+                $l->isUnlimited()
+                    ? ($l->used ?? '?') . '/neogr'
+                    : ($l->used ?? '?') . '/' . ($l->total ?? '?'),
+                $l->expiresAt === null
+                    ? ''
+                    : 'istice ' . substr($l->expiresAt, 0, 10) . ($l->isExpired() ? '  ISTEKLO' : '')
+            ));
+        }
+
         if ($result->warnings !== []) {
             $stdout();
             $stdout('NAPOMENE (' . count($result->warnings) . ') — ne obaraju run');
@@ -1148,6 +1174,7 @@ try {
             new ClusterRepository($pdo),
             new HostRepository($pdo),
             new VmRepository($pdo),
+            new LicenseRepository($pdo),
         );
 
         $stdout("Prikupljam sa {$integration->baseUrl()} i upisujem u bazu.");

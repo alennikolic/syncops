@@ -15,6 +15,7 @@ use SyncOps\Integration\Integration;
 use SyncOps\Source\VCenter\Client\ClientFactory;
 use SyncOps\Source\VCenter\Collector\ClusterCollector;
 use SyncOps\Source\VCenter\Collector\HostCollector;
+use SyncOps\Source\VCenter\Collector\LicenseCollector;
 use SyncOps\Source\VCenter\Collector\VmCollector;
 
 final class VCenterSource
@@ -24,6 +25,7 @@ final class VCenterSource
         private readonly ClusterCollector $clusters = new ClusterCollector(),
         private readonly HostCollector $hosts = new HostCollector(),
         private readonly VmCollector $vms = new VmCollector(),
+        private readonly LicenseCollector $licenses = new LicenseCollector(),
     ) {
     }
 
@@ -68,17 +70,23 @@ final class VCenterSource
                     },
             );
 
+            // Licence idu posle inventara i namerno NE obaraju run: citanje
+            // trazi pravo Global.Licenses, koje namenski nalog cesto nema.
+            // Kada ga nema, kolektor vrati praznu listu i upozorenje.
+            $notify('licence', 0, 0);
+            $licenses = $this->licenses->collect($client);
+
             return new CollectionResult(
                 flavor: $client->flavor(),
                 productVersion: $client->productVersion(),
                 clusters: $found['clusters'],
                 hosts: $hosts,
                 vms: $vms,
+                licenses: $licenses,
                 failures: $this->vms->failures(),
-                // Jedan protokol znaci i jedno mesto na kom nesto moze da zakaze:
-                // ili se inventar procitao, ili je run pukao. Dopunski
-                // izvor koji moze tiho da izostane vise ne postoji.
-                warnings: [],
+                // Inventar se ili procitao ili je run pukao. Jedino sto sme
+                // tiho da izostane su licence, i to se prijavljuje ovde.
+                warnings: $this->licenses->warnings(),
                 apiCalls: $client->callCount(),
                 durationSeconds: microtime(true) - $started,
             );
