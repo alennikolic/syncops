@@ -92,6 +92,7 @@ use SyncOps\Sync\Applier;
 use SyncOps\Sync\Matcher;
 use SyncOps\Sync\Planner;
 use SyncOps\Storage\Repository\ClusterRepository;
+use SyncOps\Storage\Repository\HostDeviceRepository;
 use SyncOps\Storage\Repository\HostRepository;
 use SyncOps\Storage\Repository\DatastoreRepository;
 use SyncOps\Storage\Repository\LicenseRepository;
@@ -478,6 +479,7 @@ try {
         new VmRepository($pdo),
         new LicenseRepository($pdo),
         new DatastoreRepository($pdo),
+        new HostDeviceRepository($pdo),
     );
 
     // --- worker -----------------------------------------------------------
@@ -1096,6 +1098,26 @@ try {
         unset($totalVms);
 
         // ---------------------------------------------------------------
+        // Uredjaji hostova
+        // ---------------------------------------------------------------
+        $stdout();
+        $stdout('UREDJAJI HOSTOVA (' . count($result->hostDevices) . ')');
+        $stdout(str_repeat('-', 72));
+
+        $poVrsti = [];
+
+        foreach ($result->hostDevices as $d) {
+            $poVrsti[$d->label()] = ($poVrsti[$d->label()] ?? 0) + 1;
+        }
+
+        foreach ($poVrsti as $vrsta => $n) {
+            $stdout(sprintf('  %-20s %d', $vrsta, $n));
+        }
+
+        $ipova = count(array_filter($result->hostDevices, static fn ($d) => $d->ipAddress !== null));
+        $stdout(sprintf('  %-20s %d', 'sa IP adresom', $ipova));
+
+        // ---------------------------------------------------------------
         // Datastore
         // ---------------------------------------------------------------
         $gib = static fn (?int $b): string => $b === null
@@ -1202,6 +1224,7 @@ try {
             new VmRepository($pdo),
             new LicenseRepository($pdo),
             new DatastoreRepository($pdo),
+            new HostDeviceRepository($pdo),
         );
 
         $stdout("Prikupljam sa {$integration->baseUrl()} i upisujem u bazu.");
