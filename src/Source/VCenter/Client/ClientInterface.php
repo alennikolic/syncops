@@ -95,6 +95,23 @@ interface ClientInterface
      */
     public function getVmGuestIdentity(string $vmId): ?array;
 
+    /**
+     * Licence sa vCentera, sve jednim pozivom.
+     *
+     * Ne vraca prostu listu nego i objasnjenje zasto je prazna. Citanje
+     * licenci trazi pravo Global.Licenses; kada ga nalog nema, vCenter NE
+     * vraca gresku nego uspesan odgovor bez vrednosti. Prazna lista bi zato
+     * bila dvosmislena — ili vCenter nema licenci, ili ih nalog ne vidi.
+     * missingPrivilege razdvaja to dvoje: null znaci da je citanje proslo.
+     *
+     * Kljucevi jednog reda: key, name, edition_key, total, used, cost_unit,
+     * properties (skalarne osobine: ProductName, ProductVersion,
+     * expirationDate...).
+     *
+     * @return array{licenses: list<array<string, mixed>>, missingPrivilege: ?string}
+     */
+    public function listLicenses(): array;
+
     /** Koliko je HTTP poziva ovaj klijent do sada napravio. */
     public function callCount(): int;
 }
