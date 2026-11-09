@@ -337,6 +337,123 @@ final class Vim25Client extends AbstractSoapClient implements ClientInterface
     }
 
     // -----------------------------------------------------------------
+    // Licence
+    // -----------------------------------------------------------------
+
+    /**
+     * Sve licence jednim pozivom.
+     *
+     * LicenseManager je singlton i ne stoji u stablu inventara, pa se cita
+     * direktno umesto kroz ContainerView.
+     *
+     * Odbacuju se dve vrste osobina, obe zato sto nadimaju payload bez
+     * vrednosti za evidenciju:
+     *   feature     — pedesetak zapisa po licenci, spisak moguconosti edicije
+     *   LicenseInfo — cela ugnezdjena kopija licence, po jedna za svaki
+     *                 FileVersion; na stvarnom odgovoru to je bilo preko pet
+     *                 hiljada redova XML-a za devet licenci
+     *
+     * @return array{licenses: list<array<string, mixed>>, missingPrivilege: ?string}
+     */
+    public function listLicenses(): array
+    {
+        // licenseManager stize uz ServiceContent, koji se cita pri prijavi.
+        $this->login();
+
+        if ($this->licenseManager === null) {
+            return ['licenses' => [], 'missingPrivilege' => null];
+        }
+
+        $xpath   = $this->retrieveObject('LicenseManager', $this->licenseManager, ['licenses']);
+        $missing = $this->missingPrivilege($xpath, 'licenses');
+
+        if ($missing !== null) {
+            return ['licenses' => [], 'missingPrivilege' => $missing];
+        }
+
+        // Putanja je vezana za <val> unutar <propSet>, da se ne pokupe
+        // ugnezdjene kopije licence iz properties — one stoje pod <value>.
+        $nodes = $xpath->query(
+            '//*[local-name()="propSet"]/*[local-name()="val"]'
+            . '/*[local-name()="LicenseManagerLicenseInfo"]'
+        );
+
+        $licenses = [];
+
+        foreach ($nodes ?: [] as $node) {
+            $licenses[] = [
+                'key'         => $this->text($xpath, './*[local-name()="licenseKey"]', $node) ?? '',
+                'name'        => $this->text($xpath, './*[local-name()="name"]', $node) ?? '',
+                'edition_key' => $this->text($xpath, './*[local-name()="editionKey"]', $node),
+                'total'       => $this->text($xpath, './*[local-name()="total"]', $node),
+                'used'        => $this->text($xpath, './*[local-name()="used"]', $node),
+                'cost_unit'   => $this->text($xpath, './*[local-name()="costUnit"]', $node),
+                'properties'  => $this->licenseProperties($xpath, $node),
+            ];
+        }
+
+        return ['licenses' => $licenses, 'missingPrivilege' => null];
+    }
+
+    /**
+     * Skalarne osobine jedne licence: ProductName, ProductVersion,
+     * expirationDate i slicne.
+     *
+     * Cita se SAMO prvi nivo (./properties), pa ugnezdjene kopije licence ne
+     * mogu da se umesaju. Osobina koja nije prost tekst se preskace.
+     *
+     * @return array<string, string>
+     */
+    private function licenseProperties(DOMXPath $xpath, DOMNode $license): array
+    {
+        $skip = ['feature' => true, 'LicenseInfo' => true, 'Localized' => true];
+
+        $properties = [];
+
+        foreach ($xpath->query('./*[local-name()="properties"]', $license) ?: [] as $property) {
+            $key = $this->text($xpath, './*[local-name()="key"]', $property);
+
+            if ($key === null || isset($skip[$key])) {
+                continue;
+            }
+
+            $value = $xpath->query('./*[local-name()="value"]', $property);
+
+            if ($value === false || $value->length === 0) {
+                continue;
+            }
+
+            $node = $value->item(0);
+
+            // Slozena vrednost (KeyValue, niz) ima decu; takvu ne cuvamo, jer
+            // bi se u koloni nasao slepljen tekst bez znacenja.
+            if ($node === null || $this->hasElementChildren($node)) {
+                continue;
+            }
+
+            $text = trim($node->textContent);
+
+            if ($text !== '') {
+                $properties[$key] = $text;
+            }
+        }
+
+        return $properties;
+    }
+
+    /** Da li cvor sadrzi druge elemente, a ne samo tekst. */
+    private function hasElementChildren(DOMNode $node): bool
+    {
+        foreach ($node->childNodes as $child) {
+            if ($child->nodeType === XML_ELEMENT_NODE) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    // -----------------------------------------------------------------
     // Citanje inventara
     // -----------------------------------------------------------------
 
