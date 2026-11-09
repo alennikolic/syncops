@@ -323,6 +323,36 @@ final class InventoryQuery
     }
 
     // -----------------------------------------------------------------
+    // Uredjaji hostova
+    // -----------------------------------------------------------------
+
+    /**
+     * Uredjaji jednog hosta, grupisani po vrsti.
+     *
+     * Redjaju se po imenu uredjaja, sto je kod vmnic0..vmnic7 i vmk0..vmk3
+     * ujedno i redosled kojim ih covek ocekuje.
+     *
+     * @return array<string, list<array<string, mixed>>> vrsta => redovi
+     */
+    public function hostDevices(int $integrationId, string $hostMoref): array
+    {
+        $stmt = $this->pdo->prepare(
+            'SELECT * FROM vc_host_device
+              WHERE integration_id = :integration AND host_moref = :host
+              ORDER BY kind, device'
+        );
+        $stmt->execute(['integration' => $integrationId, 'host' => $hostMoref]);
+
+        $poVrsti = [];
+
+        foreach ($stmt->fetchAll() as $row) {
+            $poVrsti[(string) $row['kind']][] = $row;
+        }
+
+        return $poVrsti;
+    }
+
+    // -----------------------------------------------------------------
     // Datastore-ovi
     // -----------------------------------------------------------------
 
