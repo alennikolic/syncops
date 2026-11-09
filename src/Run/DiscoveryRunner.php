@@ -23,6 +23,7 @@ use SyncOps\Storage\InventoryRepository;
 use SyncOps\Storage\RawStore;
 use SyncOps\Storage\Repository\ClusterRepository;
 use SyncOps\Storage\Repository\HostRepository;
+use SyncOps\Storage\Repository\LicenseRepository;
 use SyncOps\Storage\Repository\VmRepository;
 use Throwable;
 
@@ -37,6 +38,7 @@ final class DiscoveryRunner
         private readonly ClusterRepository $clusters,
         private readonly HostRepository $hosts,
         private readonly VmRepository $vms,
+        private readonly LicenseRepository $licenses,
     ) {
     }
 
@@ -136,6 +138,9 @@ final class DiscoveryRunner
             'clusters' => [$this->clusters, 'cluster', $result->clusters],
             'hosts'    => [$this->hosts, 'host', $result->hosts],
             'vms'      => [$this->vms, 'vm', $result->vms],
+            // Licence na kraju: ne zavise ni od cega iznad, a kada ih nalog
+            // ne sme citati lista je prazna i persist() prolazi bez posla.
+            'licenses' => [$this->licenses, 'license', $result->licenses],
         ];
 
         $stats = [];
