@@ -77,7 +77,7 @@ foreach ($datastores as $datastore) {
                 $odnos   = $datastore['used_ratio'] === null ? null : (float) $datastore['used_ratio'];
                 $procenat = $odnos === null ? null : (int) round($odnos * 100);
 
-                $nedostupan = $datastore['accessible'] !== null && (int) $datastore['accessible'] === 0;
+                $nedostupan = $datastore['is_accessible'] !== null && (int) $datastore['is_accessible'] === 0;
                 $uOdrzavanju = ($datastore['maintenance_mode'] ?? 'normal') !== 'normal';
 
                 $rail = match (true) {
