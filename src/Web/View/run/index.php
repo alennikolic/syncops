@@ -41,6 +41,7 @@ $typeLabel = ['pending' => '—', 'ok' => 'ok', 'failed' => 'greška'];
                     <th>Klasteri</th>
                     <th>Hostovi</th>
                     <th>Mašine</th>
+                    <th>Licence</th>
                     <th>Trajanje</th>
                     <th>Poziva</th>
                 </tr>
@@ -83,12 +84,22 @@ $typeLabel = ['pending' => '—', 'ok' => 'ok', 'failed' => 'greška'];
                             <div class="muted">+<?= $e($run['vms_changed']) ?></div>
                         <?php endif; ?>
                     </td>
+                    <td class="data">
+                        <?php if (($run['licenses_status'] ?? 'pending') === 'pending'): ?>
+                            <span class="muted">—</span>
+                        <?php else: ?>
+                            <?= $e($run['licenses_found']) ?>
+                            <?php if ($run['licenses_changed'] > 0): ?>
+                                <div class="muted">+<?= $e($run['licenses_changed']) ?></div>
+                            <?php endif; ?>
+                        <?php endif; ?>
+                    </td>
                     <td class="data"><?= $run['duration_seconds'] === null ? '—' : $e($run['duration_seconds']) . ' s' ?></td>
                     <td class="data"><?= $e($run['api_calls']) ?></td>
                 </tr>
                 <?php if ($run['error_message'] !== null): ?>
                     <tr>
-                        <td colspan="8" class="muted" style="padding-top:0">
+                        <td colspan="9" class="muted" style="padding-top:0">
                             <pre class="diff"><?= $e(mb_strimwidth((string) $run['error_message'], 0, 600, '…')) ?></pre>
                         </td>
                     </tr>
