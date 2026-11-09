@@ -104,6 +104,7 @@ final class InventoryController
             'nav'       => 'hosts',
             'host'      => $host,
             'vms'       => $this->query->vmsOnHost((int) $host['integration_id'], (string) $host['moref']),
+            'devices'   => $this->query->hostDevices((int) $host['integration_id'], (string) $host['moref']),
             'changes'   => $this->query->hostChanges((int) $host['id']),
             'lastRuns'  => $this->query->lastSuccessfulRuns(),
             'raw'       => $raw,
