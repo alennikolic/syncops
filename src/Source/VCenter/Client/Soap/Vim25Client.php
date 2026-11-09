@@ -77,6 +77,29 @@ final class Vim25Client extends AbstractSoapClient implements ClientInterface
         'configuration.drsConfig.enabled',
     ];
 
+    /**
+     * Polja za svaki datastore.
+     *
+     * info se trazi ceo iako se zadrzava samo deo: vSphere ume i ugnezdjene
+     * putanje (info.vmfs.uuid), ali one vrede samo za VMFS — kod NFS-a i
+     * vSAN-a bi dosle kao nepostojece polje. Jedan trazeni blok radi za sve
+     * tipove, a secenje se radi ovde.
+     */
+    private const DATASTORE_PROPERTIES = [
+        'name',
+        'summary.type',
+        'summary.capacity',
+        'summary.freeSpace',
+        'summary.uncommitted',
+        'summary.accessible',
+        'summary.multipleHostAccess',
+        'summary.maintenanceMode',
+        'summary.url',
+        'overallStatus',
+        'host',
+        'info',
+    ];
+
     /** vim25 -> oblik koji vracaju REST dijalekti. */
     private const VM_POWER = [
         'poweredOn'  => 'POWERED_ON',
@@ -334,6 +357,145 @@ final class Vim25Client extends AbstractSoapClient implements ClientInterface
         // Isto pravilo kao kod REST-a: bez imena i bez adrese nema sta da se
         // prijavi, pa null znaci "Tools ne rade".
         return ($guest['host_name'] === null && $guest['ip_address'] === null) ? null : $guest;
+    }
+
+    // -----------------------------------------------------------------
+    // Datastore-ovi
+    // -----------------------------------------------------------------
+
+    /**
+     * Svi datastore-ovi jednim pozivom.
+     *
+     * Iz info bloka se zadrzava samo ono sto se ne ponavlja drugde: uuid i
+     * verzija VMFS-a, pa spisak ekstenata u payload. Ostatak (maxFileSize,
+     * maxVirtualDiskCapacity, maxMemoryFileSize, maxPhysicalRDMFileSize,
+     * maxVirtualRDMFileSize, timestamp) su ogranicenja verzije VMFS-a, ista
+     * za sve datastore-ove iste verzije, plus duplikati name, url i
+     * freeSpace koji vec stoje u summary-ju.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function listDatastores(): array
+    {
+        $rows = $this->eachObject(
+            'Datastore',
+            self::DATASTORE_PROPERTIES,
+            function (DOMXPath $xpath, DOMNode $object, string $moref): array {
+                $props = $this->propSets($xpath, $object);
+
+                // Polje koje nije stiglo se NE upisuje: maper tako razlikuje
+                // "vCenter nije rekao" od nule.
+                $row = ['datastore' => $moref];
+
+                $uzmi = function (string $kljuc, string $polje) use (&$row, $xpath, $props): void {
+                    if (!isset($props[$polje])) {
+                        return;
+                    }
+
+                    $value = $this->val($xpath, $props[$polje], null);
+
+                    if ($value !== null) {
+                        $row[$kljuc] = $value;
+                    }
+                };
+
+                $uzmi('name', 'name');
+                $uzmi('type', 'summary.type');
+                $uzmi('capacity', 'summary.capacity');
+                $uzmi('free_space', 'summary.freeSpace');
+                $uzmi('uncommitted', 'summary.uncommitted');
+                $uzmi('accessible', 'summary.accessible');
+                $uzmi('multiple_host_access', 'summary.multipleHostAccess');
+                $uzmi('maintenance_mode', 'summary.maintenanceMode');
+                $uzmi('url', 'summary.url');
+                $uzmi('overall_status', 'overallStatus');
+
+                if (isset($props['host'])) {
+                    $row['hosts'] = $this->mountedHosts($xpath, $props['host']);
+                }
+
+                if (isset($props['info'])) {
+                    $row += $this->datastoreInfo($xpath, $props['info']);
+                }
+
+                return $row;
+            }
+        );
+
+        return array_values($rows);
+    }
+
+    /**
+     * Moref-ovi hostova koji montiraju datastore.
+     *
+     * Jedan LUN ume da vide svi hostovi klastera, pa ovo nije jedan na jedan.
+     * Cuva se spisak, a broj se racuna iz njega.
+     *
+     * @return list<string>
+     */
+    private function mountedHosts(DOMXPath $xpath, DOMNode $propSet): array
+    {
+        $hosts = [];
+
+        foreach ($xpath->query('./*[local-name()="val"]/*', $propSet) ?: [] as $mount) {
+            $host = $this->text($xpath, './*[local-name()="key"]', $mount);
+
+            if ($host !== null) {
+                $hosts[] = $host;
+            }
+        }
+
+        return $hosts;
+    }
+
+    /**
+     * Ono malo iz info bloka sto vredi zadrzati.
+     *
+     * Oblik se razlikuje po tipu: VmfsDatastoreInfo nosi <vmfs>, a
+     * NasDatastoreInfo <nas> sa udaljenim hostom i putanjom. Sto ne postoji,
+     * to se i ne upisuje.
+     *
+     * @return array<string, mixed>
+     */
+    private function datastoreInfo(DOMXPath $xpath, DOMNode $propSet): array
+    {
+        $info = [];
+
+        $map = [
+            'vmfs_uuid'    => './*[local-name()="val"]/*[local-name()="vmfs"]/*[local-name()="uuid"]',
+            'vmfs_version' => './*[local-name()="val"]/*[local-name()="vmfs"]/*[local-name()="version"]',
+            'nas_host'     => './*[local-name()="val"]/*[local-name()="nas"]/*[local-name()="remoteHost"]',
+            'nas_path'     => './*[local-name()="val"]/*[local-name()="nas"]/*[local-name()="remotePath"]',
+        ];
+
+        foreach ($map as $kljuc => $putanja) {
+            $value = $this->text($xpath, $putanja, $propSet);
+
+            if ($value !== null) {
+                $info[$kljuc] = $value;
+            }
+        }
+
+        // Ekstenti: na kojim diskovima datastore stvarno lezi. Ide samo u
+        // payload, jer ih ume biti vise po datastore-u.
+        $extents = [];
+
+        $query = './*[local-name()="val"]/*[local-name()="vmfs"]/*[local-name()="extent"]'
+            . '/*[local-name()="diskName"]';
+
+        foreach ($xpath->query($query, $propSet) ?: [] as $extent) {
+            $disk = trim($extent->textContent);
+
+            if ($disk !== '') {
+                $extents[] = $disk;
+            }
+        }
+
+        if ($extents !== []) {
+            $info['extents'] = $extents;
+        }
+
+        return $info;
     }
 
     // -----------------------------------------------------------------

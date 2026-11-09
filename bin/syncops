@@ -93,6 +93,7 @@ use SyncOps\Sync\Matcher;
 use SyncOps\Sync\Planner;
 use SyncOps\Storage\Repository\ClusterRepository;
 use SyncOps\Storage\Repository\HostRepository;
+use SyncOps\Storage\Repository\DatastoreRepository;
 use SyncOps\Storage\Repository\LicenseRepository;
 use SyncOps\Storage\Repository\VmRepository;
 use SyncOps\Web\Auth;
@@ -476,6 +477,7 @@ try {
         new HostRepository($pdo),
         new VmRepository($pdo),
         new LicenseRepository($pdo),
+        new DatastoreRepository($pdo),
     );
 
     // --- worker -----------------------------------------------------------
@@ -1094,6 +1096,30 @@ try {
         unset($totalVms);
 
         // ---------------------------------------------------------------
+        // Datastore
+        // ---------------------------------------------------------------
+        $gib = static fn (?int $b): string => $b === null
+            ? '—'
+            : number_format($b / 1073741824, 1, ',', '.') . ' GiB';
+
+        $stdout();
+        $stdout('DATASTORE (' . count($result->datastores) . ')');
+        $stdout(str_repeat('-', 72));
+
+        foreach ($result->datastores as $d) {
+            $stdout(sprintf(
+                '  %-26s %-7s %4s%%  slobodno %-14s hostova %s',
+                mb_strimwidth($d->name, 0, 25, '…'),
+                $d->type ?? '—',
+                $d->usedPercent() ?? '  —',
+                $gib($d->freeBytes),
+                $d->hostCount ?? '—'
+            ));
+        }
+
+        unset($gib);
+
+        // ---------------------------------------------------------------
         // Licence
         // ---------------------------------------------------------------
         $stdout();
@@ -1175,6 +1201,7 @@ try {
             new HostRepository($pdo),
             new VmRepository($pdo),
             new LicenseRepository($pdo),
+            new DatastoreRepository($pdo),
         );
 
         $stdout("Prikupljam sa {$integration->baseUrl()} i upisujem u bazu.");

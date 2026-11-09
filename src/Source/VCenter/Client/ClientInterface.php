@@ -96,6 +96,21 @@ interface ClientInterface
     public function getVmGuestIdentity(string $vmId): ?array;
 
     /**
+     * Datastore-ovi, svi jednim pozivom.
+     *
+     * Kljucevi jednog reda: datastore (moref), name, type, capacity,
+     * free_space, uncommitted, accessible, multiple_host_access,
+     * maintenance_mode, overall_status, url, hosts (moref-ovi hostova koji ga
+     * montiraju), vmfs_uuid, vmfs_version.
+     *
+     * Polje koje vCenter nije vratio IZOSTAJE iz niza, umesto da dodje kao
+     * prazna vrednost — tako maper razlikuje "nema podatka" od nule.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function listDatastores(): array;
+
+    /**
      * Licence sa vCentera, sve jednim pozivom.
      *
      * Ne vraca prostu listu nego i objasnjenje zasto je prazna. Citanje

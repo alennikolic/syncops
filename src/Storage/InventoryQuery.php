@@ -323,6 +323,34 @@ final class InventoryQuery
     }
 
     // -----------------------------------------------------------------
+    // Datastore-ovi
+    // -----------------------------------------------------------------
+
+    /**
+     * Datastore-ovi sa svih vCentera.
+     *
+     * Redjaju se po popunjenosti, najpuniji prvi: zbog toga se na ovaj ekran
+     * i dolazi. Datastore bez kapaciteta (vSAN bez diskova javlja nulu) ide
+     * na kraj, jer se za njega popunjenost ne moze izracunati.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function datastores(): array
+    {
+        return $this->pdo->query(
+            'SELECT d.*,
+                    i.name AS integration_name,
+                    CASE WHEN d.capacity_bytes > 0 AND d.free_bytes IS NOT NULL
+                         THEN (d.capacity_bytes - d.free_bytes) / d.capacity_bytes
+                         ELSE NULL
+                    END AS used_ratio
+               FROM vc_datastore d
+               JOIN integration i ON i.id = d.integration_id
+              ORDER BY used_ratio IS NULL, used_ratio DESC, d.name'
+        )->fetchAll();
+    }
+
+    // -----------------------------------------------------------------
     // Licence
     // -----------------------------------------------------------------
 
