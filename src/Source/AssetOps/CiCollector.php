@@ -12,8 +12,10 @@
 //
 // Cita se LISTA, ne detalji po zapisu. Lista nosi i attribute_values, pa je
 // dovoljna i za spajanje i za prikaz; 36 CI-jeva je jedan poziv, a ne 36.
-// Polje koje postoji samo u detaljima (description) ovde ne dolazi — to je
-// poznata granica i resava je sloj poredjenja.
+//
+// description se cita iz liste kao i ostala nativna polja. Kod entiteta koji
+// ga u listi ne vrati ostaje null — kolona tada stoji prazna umesto da zbog
+// jednog polja krenu detalji po zapisu.
 
 declare(strict_types=1);
 
@@ -95,6 +97,7 @@ final class CiCollector
         return [
             'uuid'              => $uuid,
             'name'              => $this->name($item['name'] ?? ''),
+            'description'       => $this->text($item['description'] ?? null),
             'type_slug'         => $this->slug($item[self::TYPE_FIELD[$entity]] ?? null),
             'status_slug'       => $this->slug($item['status'] ?? null),
             'location_slug'     => $this->slug($item['location'] ?? null),
