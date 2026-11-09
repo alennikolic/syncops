@@ -7,6 +7,7 @@
 /** @var callable $e */
 /** @var array<string, mixed> $host */
 /** @var list<array<string,mixed>> $vms */
+/** @var array<string, list<array<string,mixed>>> $devices vrsta => redovi */
 /** @var list<array<string,mixed>> $changes */
 /** @var array<int, int> $lastRuns */
 
@@ -139,6 +140,207 @@ $gib = static function (mixed $bytes) use ($e): string {
     </section>
 
 </div>
+
+<?php
+// ---------------------------------------------------------------------
+// Uredjaji hosta
+//
+// Citaju se u zasebnom prolazu, ne uz ostala polja hosta: ta polja
+// uvecavaju odgovor vCentera vise od dvesta puta, a hostovi se citaju i
+// po datacentru. Prazno ovde znaci da prikupljanje jos nije proslo posle
+// dodavanja ove tabele, ne da host nema mrezu.
+// ---------------------------------------------------------------------
+$ukupnoUredjaja = array_sum(array_map('count', $devices));
+
+/** Vrednost ili crtica, za celije tabele. */
+$cell = static fn (mixed $v): string => ($v === null || $v === '') ? '—' : $e($v);
+?>
+
+<h2 class="section-head">
+    Uređaji<?= $ukupnoUredjaja === 0 ? '' : ' (' . $e($ukupnoUredjaja) . ')' ?>
+</h2>
+
+<?php if ($ukupnoUredjaja === 0): ?>
+
+    <div class="panel">
+        <div class="empty">
+            <p>
+                Nema prikupljenih uređaja. Pokreni prikupljanje da bi se
+                mrežne kartice, VMkernel adapteri, svičevi, port grupe i HBA
+                pojavili ovde.
+            </p>
+        </div>
+    </div>
+
+<?php else: ?>
+
+    <?php if (($devices['vmk'] ?? []) !== []): ?>
+        <h3 class="section-head">VMkernel adapteri</h3>
+        <div class="panel">
+            <table>
+                <thead><tr>
+                    <th>Adapter</th><th>IP adresa</th><th>Maska</th><th>Gateway</th>
+                    <th>DHCP</th><th>MTU</th><th>Port grupa</th><th>MAC</th>
+                </tr></thead>
+                <tbody>
+                <?php foreach ($devices['vmk'] as $d): ?>
+                    <tr>
+                        <td class="data"><?= $e($d['device']) ?></td>
+                        <td class="data"><?= $cell($d['ip_address']) ?></td>
+                        <td class="data"><?= $cell($d['subnet_mask']) ?></td>
+                        <td class="data"><?= $cell($d['gateway']) ?></td>
+                        <td><?= $d['dhcp'] === null ? '—' : ((int) $d['dhcp'] === 1 ? 'da' : 'ne') ?></td>
+                        <td class="data"><?= $cell($d['mtu']) ?></td>
+                        <td><?= $cell($d['port_group']) ?></td>
+                        <td class="data"><?= $cell($d['mac']) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+
+    <?php if (($devices['pnic'] ?? []) !== []): ?>
+        <h3 class="section-head">Mrežne kartice</h3>
+        <div class="panel">
+            <table>
+                <thead><tr>
+                    <th>Kartica</th><th>Veza</th><th>MAC</th>
+                    <th>Drajver</th><th>Firmver</th><th>PCI</th>
+                </tr></thead>
+                <tbody>
+                <?php foreach ($devices['pnic'] as $d):
+                    // linkSpeed izostaje kada je link dole — to je podatak, ne propust.
+                    $dole = $d['speed_mb'] === null;
+                ?>
+                    <tr>
+                        <td class="rail <?= $dole ? 'rail-warn' : 'rail-ok' ?>"><?= $e($d['device']) ?></td>
+                        <td class="data">
+                            <?php if ($dole): ?>
+                                <span class="state-warn">bez veze</span>
+                            <?php else: ?>
+                                <?= $e((int) $d['speed_mb'] >= 1000
+                                    ? (int) ((int) $d['speed_mb'] / 1000) . ' Gb'
+                                    : $d['speed_mb'] . ' Mb') ?>
+                                <?php if ($d['duplex'] !== null && (int) $d['duplex'] === 1): ?>
+                                    <span class="muted">full</span>
+                                <?php endif; ?>
+                            <?php endif; ?>
+                        </td>
+                        <td class="data"><?= $cell($d['mac']) ?></td>
+                        <td class="data">
+                            <?= $cell($d['driver']) ?>
+                            <?php if ($d['driver_version'] !== null): ?>
+                                <div class="muted"><?= $e($d['driver_version']) ?></div>
+                            <?php endif; ?>
+                        </td>
+                        <td class="data"><?= $cell($d['firmware_version']) ?></td>
+                        <td class="data"><?= $cell($d['pci']) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+
+    <?php if (($devices['hba'] ?? []) !== []): ?>
+        <h3 class="section-head">HBA adapteri</h3>
+        <div class="panel">
+            <table>
+                <thead><tr>
+                    <th>Adapter</th><th>Vrsta</th><th>Model</th><th>Stanje</th>
+                    <th>WWPN / iSCSI ime</th><th>Brzina</th><th>Drajver</th>
+                </tr></thead>
+                <tbody>
+                <?php
+                $hbaLabel = [
+                    'fibreChannel'   => 'Fibre Channel',
+                    'iscsi'          => 'iSCSI',
+                    'serialAttached' => 'SAS',
+                    'parallelScsi'   => 'Parallel SCSI',
+                    'block'          => 'Block',
+                ];
+
+                foreach ($devices['hba'] as $d):
+                    $online = ($d['status'] ?? '') === 'online';
+                ?>
+                    <tr>
+                        <td class="rail <?= $online ? 'rail-ok' : 'rail-idle' ?>"><?= $e($d['device']) ?></td>
+                        <td><?= $e($hbaLabel[$d['hba_type'] ?? ''] ?? ($d['hba_type'] ?? '—')) ?></td>
+                        <td><?= $cell($d['model']) ?></td>
+                        <td><?= $cell($d['status']) ?></td>
+                        <td class="data">
+                            <?php if ($d['iscsi_name'] !== null): ?>
+                                <?= $e($d['iscsi_name']) ?>
+                            <?php elseif ($d['wwpn'] !== null): ?>
+                                <?= $e($d['wwpn']) ?>
+                                <?php if ($d['wwnn'] !== null): ?>
+                                    <div class="muted">node <?= $e($d['wwnn']) ?></div>
+                                <?php endif; ?>
+                            <?php elseif ($d['wwnn'] !== null): ?>
+                                <?= $e($d['wwnn']) ?>
+                            <?php else: ?>
+                                —
+                            <?php endif; ?>
+                        </td>
+                        <td class="data"><?= $d['speed_mb'] === null ? '—' : $e((int) ((int) $d['speed_mb'] / 1000)) . ' Gb' ?></td>
+                        <td class="data"><?= $cell($d['driver']) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+    <?php endif; ?>
+
+    <?php if (($devices['vswitch'] ?? []) !== [] || ($devices['portgroup'] ?? []) !== []): ?>
+        <h3 class="section-head">Standardni svičevi i port grupe</h3>
+        <div class="panel">
+            <table>
+                <thead><tr>
+                    <th>Svič</th><th>Portova</th><th>Slobodno</th><th>MTU</th>
+                </tr></thead>
+                <tbody>
+                <?php foreach ($devices['vswitch'] ?? [] as $d): ?>
+                    <tr>
+                        <td class="data"><?= $e($d['device']) ?></td>
+                        <td class="data"><?= $cell($d['num_ports']) ?></td>
+                        <td class="data"><?= $cell($d['num_ports_available']) ?></td>
+                        <td class="data"><?= $cell($d['mtu']) ?></td>
+                    </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+
+            <?php if (($devices['portgroup'] ?? []) !== []): ?>
+                <table>
+                    <thead><tr>
+                        <th>Port grupa</th><th>VLAN</th><th>Svič</th>
+                    </tr></thead>
+                    <tbody>
+                    <?php foreach ($devices['portgroup'] as $d): ?>
+                        <tr>
+                            <td><?= $e($d['device']) ?></td>
+                            <td class="data">
+                                <?php if ($d['vlan_id'] === null): ?>
+                                    —
+                                <?php elseif ((int) $d['vlan_id'] === 0): ?>
+                                    <span class="muted">bez VLAN-a</span>
+                                <?php elseif ((int) $d['vlan_id'] === 4095): ?>
+                                    trunk
+                                <?php else: ?>
+                                    <?= $e($d['vlan_id']) ?>
+                                <?php endif; ?>
+                            </td>
+                            <td class="data"><?= $cell($d['vswitch_name']) ?></td>
+                        </tr>
+                    <?php endforeach; ?>
+                    </tbody>
+                </table>
+            <?php endif; ?>
+        </div>
+    <?php endif; ?>
+
+<?php endif; ?>
 
 <h2 class="section-head">
     Mašine na hostu<?= $vms === [] ? '' : ' (' . $e(count($vms)) . ')' ?>
