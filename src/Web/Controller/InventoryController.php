@@ -33,6 +33,18 @@ final class InventoryController
         ]);
     }
 
+    public function licenses(): void
+    {
+        $this->view->render('inventory/licenses', [
+            'title'    => 'Licence',
+            'nav'      => 'licenses',
+            'licenses' => $this->query->licenses(),
+            'lastRuns' => $this->query->lastSuccessfulRuns(),
+            // Rok se poredi sa UTC-om, kao i sve ostalo u bazi.
+            'nowUtc'   => gmdate('Y-m-d H:i:s'),
+        ]);
+    }
+
     /**
      * @return array<string, string>
      */
