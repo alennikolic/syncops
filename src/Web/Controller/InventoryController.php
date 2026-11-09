@@ -33,6 +33,16 @@ final class InventoryController
         ]);
     }
 
+    public function datastores(): void
+    {
+        $this->view->render('inventory/datastores', [
+            'title'      => 'Datastore',
+            'nav'        => 'datastores',
+            'datastores' => $this->query->datastores(),
+            'lastRuns'   => $this->query->lastSuccessfulRuns(),
+        ]);
+    }
+
     public function licenses(): void
     {
         $this->view->render('inventory/licenses', [
