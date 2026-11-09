@@ -16,6 +16,7 @@ use SyncOps\Source\VCenter\Client\ClientFactory;
 use SyncOps\Source\VCenter\Collector\ClusterCollector;
 use SyncOps\Source\VCenter\Collector\DatastoreCollector;
 use SyncOps\Source\VCenter\Collector\HostCollector;
+use SyncOps\Source\VCenter\Collector\HostDeviceCollector;
 use SyncOps\Source\VCenter\Collector\LicenseCollector;
 use SyncOps\Source\VCenter\Collector\VmCollector;
 
@@ -26,6 +27,7 @@ final class VCenterSource
         private readonly ClusterCollector $clusters = new ClusterCollector(),
         private readonly HostCollector $hosts = new HostCollector(),
         private readonly VmCollector $vms = new VmCollector(),
+        private readonly HostDeviceCollector $hostDevices = new HostDeviceCollector(),
         private readonly DatastoreCollector $datastores = new DatastoreCollector(),
         private readonly LicenseCollector $licenses = new LicenseCollector(),
     ) {
@@ -72,6 +74,11 @@ final class VCenterSource
                     },
             );
 
+            // Zaseban prolaz: ova polja uvecavaju odgovor za hostove 255 puta,
+            // pa ne smeju u citanje koje se ponavlja po datacentru.
+            $notify('uredjaji hostova', 0, 0);
+            $hostDevices = $this->hostDevices->collect($client);
+
             $notify('datastore', 0, 0);
             $datastores = $this->datastores->collect($client);
 
@@ -87,6 +94,7 @@ final class VCenterSource
                 clusters: $found['clusters'],
                 hosts: $hosts,
                 vms: $vms,
+                hostDevices: $hostDevices,
                 datastores: $datastores,
                 licenses: $licenses,
                 failures: $this->vms->failures(),
