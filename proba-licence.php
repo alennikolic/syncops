@@ -17,19 +17,26 @@
 
 declare(strict_types=1);
 
-require __DIR__ . '/src/Core/Db.php';
+$root = __DIR__;
 
-spl_autoload_register(static function (string $class): void {
-    if (!str_starts_with($class, 'SyncOps\\')) {
-        return;
-    }
+// Isti bootstrap kao bin/syncops: Composer ako postoji, inace PSR-4.
+$composer = $root . '/vendor/autoload.php';
 
-    $file = __DIR__ . '/src/' . str_replace('\\', '/', substr($class, 8)) . '.php';
+if (is_file($composer)) {
+    require $composer;
+} else {
+    spl_autoload_register(static function (string $class) use ($root): void {
+        if (!str_starts_with($class, 'SyncOps\\')) {
+            return;
+        }
 
-    if (is_file($file)) {
-        require $file;
-    }
-});
+        $file = $root . '/src/' . str_replace('\\', '/', substr($class, 8)) . '.php';
+
+        if (is_file($file)) {
+            require $file;
+        }
+    });
+}
 
 use SyncOps\Core\Db;
 use SyncOps\Core\Secret;
@@ -43,21 +50,12 @@ if ($id <= 0) {
     exit(1);
 }
 
-// .env se cita isto kao u bin/syncops.
-foreach (['/app/.env', __DIR__ . '/.env'] as $env) {
-    if (is_file($env)) {
-        foreach (file($env, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) as $line) {
-            if (!str_starts_with(trim($line), '#') && str_contains($line, '=')) {
-                [$k, $v] = explode('=', $line, 2);
-                $_ENV[trim($k)] = trim($v);
-            }
-        }
-        break;
-    }
-}
+// config.php cita env promenljive iz okruzenja kontejnera — nema rucnog
+// parsiranja .env fajla, isto kao u bin/syncops.
+$config = require $root . '/config/config.php';
 
-$pdo         = (new Db())->pdo();
-$repo        = new IntegrationRepository($pdo, new Secret());
+$pdo         = Db::connect($config['db']);
+$repo        = new IntegrationRepository($pdo, new Secret($config['secret_key']));
 $integration = $repo->find($id);
 
 if ($integration === null) {
@@ -76,37 +74,49 @@ $http = new SoapTransport(
 
 $esc = static fn (string $v): string => htmlspecialchars($v, ENT_XML1 | ENT_QUOTES, 'UTF-8');
 
-$pick = static function (string $xml, string $tag): ?string {
+$xpathOf = static function (string $xml): DOMXPath {
     $doc = new DOMDocument();
+    $doc->preserveWhiteSpace = false;
+    $doc->formatOutput       = true;
     @$doc->loadXML($xml);
-    $n = (new DOMXPath($doc))->query('//*[local-name()="' . $tag . '"]');
 
-    return ($n === false || $n->length === 0) ? null : trim((string) $n->item(0)?->textContent);
+    return new DOMXPath($doc);
+};
+
+$pick = static function (DOMXPath $xpath, string $query, ?DOMNode $ctx = null): ?string {
+    $n = $ctx === null ? $xpath->query($query) : $xpath->query($query, $ctx);
+
+    if ($n === false || $n->length === 0) {
+        return null;
+    }
+
+    $v = trim((string) $n->item(0)?->textContent);
+
+    return $v === '' ? null : $v;
 };
 
 // -----------------------------------------------------------------------
 // 1. ServiceContent — odatle se saznaje moref LicenseManager-a
 // -----------------------------------------------------------------------
-$xml = $http->call(
+$xpath = $xpathOf($http->call(
     'RetrieveServiceContent',
     '<RetrieveServiceContent xmlns="urn:vim25">'
     . '<_this type="ServiceInstance">ServiceInstance</_this>'
     . '</RetrieveServiceContent>'
-);
+));
 
-$collector = $pick($xml, 'propertyCollector');
-$manager   = $pick($xml, 'licenseManager');
-$session   = $pick($xml, 'sessionManager');
+$collector = $pick($xpath, '//*[local-name()="propertyCollector"]');
+$manager   = $pick($xpath, '//*[local-name()="licenseManager"]');
+$session   = $pick($xpath, '//*[local-name()="sessionManager"]');
 
-$doc = new DOMDocument();
-@$doc->loadXML($xml);
-$api = (new DOMXPath($doc))->query('//*[local-name()="about"]/*[local-name()="apiVersion"]');
-$http->setApiVersion($api && $api->length ? trim((string) $api->item(0)?->textContent) : null);
+// SOAPAction mora da nosi verziju API-ja, inace vCenter za novije metode
+// javlja da ne postoje.
+$http->setApiVersion($pick($xpath, '//*[local-name()="about"]/*[local-name()="apiVersion"]'));
 
-echo "propertyCollector : " . ($collector ?? '—') . "\n";
-echo "licenseManager    : " . ($manager ?? 'NEMA GA U ServiceContent-u') . "\n\n";
+echo 'propertyCollector : ' . ($collector ?? '—') . "\n";
+echo 'licenseManager    : ' . ($manager ?? 'NEMA GA U ServiceContent-u') . "\n\n";
 
-if ($manager === null) {
+if ($manager === null || $collector === null) {
     echo "vCenter nije prijavio licenseManager. Dalje merenje nije moguce.\n";
     exit(1);
 }
@@ -131,7 +141,7 @@ try {
     // Bez ContainerView: LicenseManager je jedan jedini objekat i cita se
     // direktno, za razliku od masina i hostova kojih ima mnogo.
     // -------------------------------------------------------------------
-    $xml = $http->call('RetrievePropertiesEx', sprintf(
+    $raw = $http->call('RetrievePropertiesEx', sprintf(
         '<RetrievePropertiesEx xmlns="urn:vim25">'
         . '<_this type="PropertyCollector">%s</_this>'
         . '<specSet>'
@@ -140,16 +150,11 @@ try {
         . '</specSet>'
         . '<options />'
         . '</RetrievePropertiesEx>',
-        $esc((string) $collector),
+        $esc($collector),
         $esc($manager)
     ));
 
-    $doc = new DOMDocument();
-    $doc->preserveWhiteSpace = false;
-    $doc->formatOutput       = true;
-    @$doc->loadXML($xml);
-
-    $xpath    = new DOMXPath($doc);
+    $xpath    = $xpathOf($raw);
     $licenses = $xpath->query('//*[local-name()="val"]/*[local-name()="LicenseManagerLicenseInfo"]');
     $broj     = $licenses === false ? 0 : $licenses->length;
 
@@ -161,29 +166,25 @@ try {
     }
 
     foreach ($licenses ?? [] as $i => $lic) {
-        $get = static function (string $tag) use ($xpath, $lic): string {
-            $n = $xpath->query('./*[local-name()="' . $tag . '"]', $lic);
-
-            return ($n === false || $n->length === 0) ? '—' : trim((string) $n->item(0)?->textContent);
-        };
+        $get = static fn (string $tag): string
+            => $pick($xpath, './*[local-name()="' . $tag . '"]', $lic) ?? '—';
 
         $kljuc    = $get('licenseKey');
         $maskiran = str_contains($kljuc, 'XXXXX');
 
         echo sprintf("[%d] %s\n", $i + 1, $get('name'));
         echo "     licenseKey  : {$kljuc}" . ($maskiran ? '   <-- MASKIRAN' : '') . "\n";
-        echo "     editionKey  : " . $get('editionKey') . "\n";
-        echo "     total / used: " . $get('total') . ' / ' . $get('used') . "\n";
-        echo "     costUnit    : " . $get('costUnit') . "\n";
+        echo '     editionKey  : ' . $get('editionKey') . "\n";
+        echo '     total / used: ' . $get('total') . ' / ' . $get('used') . "\n";
+        echo '     costUnit    : ' . $get('costUnit') . "\n";
 
         foreach ($xpath->query('./*[local-name()="properties"]', $lic) ?: [] as $p) {
-            $k = $xpath->query('./*[local-name()="key"]', $p);
-            $v = $xpath->query('./*[local-name()="value"]', $p);
-            $kt = ($k && $k->length) ? trim((string) $k->item(0)?->textContent) : '';
-            $vt = ($v && $v->length) ? trim((string) $v->item(0)?->textContent) : '';
+            $k = $pick($xpath, './*[local-name()="key"]', $p) ?? '';
+            $v = $pick($xpath, './*[local-name()="value"]', $p) ?? '';
 
-            if ($kt !== '' && !str_starts_with($kt, 'feature.')) {
-                echo sprintf("     %-12s: %s\n", $kt, $vt);
+            // feature.* ume da bude pedeset redova po licenci; ne zanima nas.
+            if ($k !== '' && !str_starts_with($k, 'feature.')) {
+                echo sprintf("     %-14s: %s\n", $k, $v);
             }
         }
 
@@ -193,7 +194,7 @@ try {
     echo str_repeat('=', 70) . "\n";
     echo "SIROV XML ODGOVOR\n";
     echo str_repeat('=', 70) . "\n";
-    echo $doc->saveXML();
+    echo $xpath->document->saveXML();
 } finally {
     $http->call('Logout', sprintf(
         '<Logout xmlns="urn:vim25"><_this type="SessionManager">%s</_this></Logout>',
