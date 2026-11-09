@@ -40,7 +40,8 @@ CREATE TABLE vc_datastore (
     uncommitted_bytes    BIGINT UNSIGNED   DEFAULT NULL
                          COMMENT 'Tanko dodeljeno preko kapaciteta; izostane kada takvih diskova nema',
 
-    accessible           TINYINT(1)        DEFAULT NULL,
+    is_accessible        TINYINT(1)        DEFAULT NULL
+                         COMMENT 'accessible je rezervisana rec u MySQL-u, otuda prefiks',
     multiple_host_access TINYINT(1)        DEFAULT NULL,
     maintenance_mode     VARCHAR(32)       DEFAULT NULL COMMENT 'normal, enteringMaintenance, inMaintenance',
     overall_status       VARCHAR(16)       DEFAULT NULL COMMENT 'green, yellow, red, gray',
