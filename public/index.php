@@ -60,6 +60,7 @@ use SyncOps\Storage\RawStore;
 use SyncOps\Storage\SchemaQuery;
 use SyncOps\Storage\Repository\ClusterRepository;
 use SyncOps\Storage\Repository\HostRepository;
+use SyncOps\Storage\Repository\DatastoreRepository;
 use SyncOps\Storage\Repository\LicenseRepository;
 use SyncOps\Storage\Repository\VmRepository;
 use SyncOps\Web\Flash;
@@ -135,6 +136,7 @@ try {
             new HostRepository($pdo),
             new VmRepository($pdo),
             new LicenseRepository($pdo),
+            new DatastoreRepository($pdo),
         );
 
         $dashboard   = new DashboardController($pdo, $repo, $view);
@@ -171,6 +173,7 @@ try {
         $router->get('/hosts/export', $inventory->exportHosts(...));
         $router->get('/hosts/{id}', $inventory->host(...));
         $router->get('/clusters', $inventory->clusters(...));
+        $router->get('/datastores', $inventory->datastores(...));
         $router->get('/licenses', $inventory->licenses(...));
 
         // Imenovane /assetops/* rute moraju PRE ruta sa {id}, inace bi se
