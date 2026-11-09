@@ -41,6 +41,7 @@ $typeLabel = ['pending' => '—', 'ok' => 'ok', 'failed' => 'greška'];
                     <th>Klasteri</th>
                     <th>Hostovi</th>
                     <th>Mašine</th>
+                    <th>Datastore</th>
                     <th>Licence</th>
                     <th>Trajanje</th>
                     <th>Poziva</th>
@@ -85,6 +86,16 @@ $typeLabel = ['pending' => '—', 'ok' => 'ok', 'failed' => 'greška'];
                         <?php endif; ?>
                     </td>
                     <td class="data">
+                        <?php if (($run['datastores_status'] ?? 'pending') === 'pending'): ?>
+                            <span class="muted">—</span>
+                        <?php else: ?>
+                            <?= $e($run['datastores_found']) ?>
+                            <?php if ($run['datastores_changed'] > 0): ?>
+                                <div class="muted">+<?= $e($run['datastores_changed']) ?></div>
+                            <?php endif; ?>
+                        <?php endif; ?>
+                    </td>
+                    <td class="data">
                         <?php if (($run['licenses_status'] ?? 'pending') === 'pending'): ?>
                             <span class="muted">—</span>
                         <?php else: ?>
@@ -99,7 +110,7 @@ $typeLabel = ['pending' => '—', 'ok' => 'ok', 'failed' => 'greška'];
                 </tr>
                 <?php if ($run['error_message'] !== null): ?>
                     <tr>
-                        <td colspan="9" class="muted" style="padding-top:0">
+                        <td colspan="10" class="muted" style="padding-top:0">
                             <pre class="diff"><?= $e(mb_strimwidth((string) $run['error_message'], 0, 600, '…')) ?></pre>
                         </td>
                     </tr>
