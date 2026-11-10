@@ -9,6 +9,7 @@ namespace SyncOps\Source\VCenter;
 
 use SyncOps\Source\Dto\ClusterDto;
 use SyncOps\Source\Dto\DatastoreDto;
+use SyncOps\Source\Dto\HostDeviceDto;
 use SyncOps\Source\Dto\HostDto;
 use SyncOps\Source\Dto\LicenseDto;
 use SyncOps\Source\Dto\VmDto;
@@ -19,6 +20,7 @@ final class CollectionResult
      * @param list<ClusterDto> $clusters
      * @param list<HostDto> $hosts
      * @param list<VmDto> $vms
+     * @param list<HostDeviceDto> $hostDevices
      * @param list<DatastoreDto> $datastores
      * @param list<LicenseDto> $licenses
      * @param list<string> $failures Pojedinacni objekti koji su pukli
@@ -31,6 +33,7 @@ final class CollectionResult
         public readonly array $clusters,
         public readonly array $hosts,
         public readonly array $vms,
+        public readonly array $hostDevices,
         public readonly array $datastores,
         public readonly array $licenses,
         public readonly array $failures,

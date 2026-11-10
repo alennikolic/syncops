@@ -96,6 +96,21 @@ interface ClientInterface
     public function getVmGuestIdentity(string $vmId): ?array;
 
     /**
+     * Uredjaji svih hostova: mrezne kartice, VMkernel adapteri, standardni
+     * svicevi, port grupe i HBA.
+     *
+     * Zaseban prolaz, ne dopuna listHosts(): ova polja uvecavaju odgovor za
+     * hostove vise od dvesta puta, a hostovi se citaju vise puta.
+     *
+     * Kljucevi jednog reda: host_moref, kind (pnic, vmk, vswitch, portgroup,
+     * hba), device, pa polja koja toj vrsti pripadaju. Polje koje vCenter
+     * nije vratio IZOSTAJE iz niza.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function listHostDevices(): array;
+
+    /**
      * Datastore-ovi, svi jednim pozivom.
      *
      * Kljucevi jednog reda: datastore (moref), name, type, capacity,

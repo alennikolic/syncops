@@ -9,9 +9,14 @@
 //   SOURCES  polja iz vc_vm i vc_host koja mogu da popune nesto
 //   NATIVE   nativna polja CI-ja u AssetOPS-u koja se mogu puniti
 //
-// Imena izvornih polja su imena KOLONA u inventaru, da se vrednost uzima bez
-// prevodjenja. Kada se doda kolona (kao sto je nedavno dodat notes), ovde se
-// dopisuje jedan red i odmah je ponudjena u mapiranju.
+// Imena izvornih polja su imena KOLONA u redu koji vrati InventoryQuery, da
+// se vrednost uzima bez prevodjenja. Kada se doda kolona (kao sto je nedavno
+// dodat notes), ovde se dopisuje jedan red i odmah je ponudjena u mapiranju.
+//
+// Vecina tih kolona stoji u vc_vm i vc_host, ali ne sve: memory_gb se racuna
+// u upitu (vmsForExport / hostsForExport), jer u bazi stoji ono sto vCenter
+// daje — MiB za masine, bajtovi za hostove — a u AssetOPS treba broj kakav
+// covek pise. Ko ovde doda izvedeno polje, mora da ga doda u OBA upita.
 //
 // "type" nije ukras: EAV atribut tipa integer prima BROJ, ne string, pa se
 // pri upisu konvertuje po tipu izvora i po tipu atributa. Prikaz ga pokazuje
@@ -56,7 +61,7 @@ final class FieldCatalog
 
             'cpu_count'            => ['Resursi', 'vCPU', 'int'],
             'cpu_cores_per_socket' => ['Resursi', 'jezgara po soketu', 'int'],
-            'memory_mib'           => ['Resursi', 'RAM u MiB', 'int'],
+            'memory_gb'            => ['Resursi', 'RAM u GB', 'text'],
             'disk_count'           => ['Resursi', 'broj diskova', 'int'],
             'disk_capacity_bytes'  => ['Resursi', 'kapacitet diskova u bajtovima', 'int'],
             'nic_count'            => ['Resursi', 'broj mrežnih kartica', 'int'],
@@ -87,7 +92,7 @@ final class FieldCatalog
             'cpu_cores'        => ['Procesor i memorija', 'jezgara ukupno', 'int'],
             'cpu_threads'      => ['Procesor i memorija', 'niti ukupno', 'int'],
             'cpu_mhz'          => ['Procesor i memorija', 'takt u MHz', 'int'],
-            'memory_bytes'     => ['Procesor i memorija', 'memorija u bajtovima', 'int'],
+            'memory_gb'        => ['Procesor i memorija', 'RAM u GB', 'text'],
 
             'esxi_version'     => ['ESXi', 'verzija', 'text'],
             'esxi_build'       => ['ESXi', 'build', 'text'],

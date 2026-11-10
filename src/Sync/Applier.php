@@ -215,8 +215,12 @@ final class Applier
 
         $this->links->recordPush($integrationId, $sourceKind, (int) $action['source']['id'], $body);
 
+        // Izmene po polju idu u dnevnik uz zapis. Telo je ceo procitani CI,
+        // pa se iz njega ne vidi sta je tacno dirnuto; ovo je racun nad
+        // SVEZIM stanjem, dakle tacno ono sto je promenjeno ovim upisom.
         $this->journal->record($integrationId, $sourceKind, $action, 'update', 'applied',
-            (int) ($response['status'] ?? 0), (string) ($response['message'] ?? ''), $body, $uuid);
+            (int) ($response['status'] ?? 0), (string) ($response['message'] ?? ''), $body, $uuid,
+            is_array($recomputed['changes'] ?? null) ? $recomputed['changes'] : null);
 
         return 'updated';
     }

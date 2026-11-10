@@ -31,6 +31,7 @@ declare(strict_types=1);
 
 namespace SyncOps\Source\VCenter\Client\Soap;
 
+use DOMElement;
 use DOMNode;
 use DOMXPath;
 use SyncOps\Integration\Integration;
@@ -75,6 +76,21 @@ final class Vim25Client extends AbstractSoapClient implements ClientInterface
         'name',
         'configuration.dasConfig.enabled',
         'configuration.drsConfig.enabled',
+    ];
+
+    /**
+     * Polja za uredjaje hostova — traze se u ZASEBNOM prolazu.
+     *
+     * Ne idu uz HOST_INVENTORY_PROPERTIES: mereno, odgovor za pet hostova
+     * raste sa 1,1 KB na 291 KB. Hostovi se citaju i po datacentru, pa bi se
+     * to mnozilo; ovako se plati jednom.
+     */
+    private const DEVICE_PROPERTIES = [
+        'config.network.pnic',
+        'config.network.vnic',
+        'config.network.vswitch',
+        'config.network.portgroup',
+        'config.storageDevice.hostBusAdapter',
     ];
 
     /**
@@ -357,6 +373,281 @@ final class Vim25Client extends AbstractSoapClient implements ClientInterface
         // Isto pravilo kao kod REST-a: bez imena i bez adrese nema sta da se
         // prijavi, pa null znaci "Tools ne rade".
         return ($guest['host_name'] === null && $guest['ip_address'] === null) ? null : $guest;
+    }
+
+    // -----------------------------------------------------------------
+    // Uredjaji hostova
+    // -----------------------------------------------------------------
+
+    /**
+     * Mrezne kartice, VMkernel adapteri, svicevi, port grupe i HBA svih
+     * hostova — jednim prolazom.
+     *
+     * Ne ulazi u listHosts() namerno: mereno na stvarnom odgovoru, ova polja
+     * uvecavaju odgovor za hostove 255 puta (1,1 KB -> 291 KB za pet
+     * hostova), a hostovi se citaju i po datacentru, pa bi se to mnozilo.
+     *
+     * @return list<array<string, mixed>>
+     */
+    public function listHostDevices(): array
+    {
+        $poHostu = $this->eachObject(
+            'HostSystem',
+            self::DEVICE_PROPERTIES,
+            function (DOMXPath $xpath, DOMNode $object, string $moref): array {
+                $props = $this->propSets($xpath, $object);
+
+                return [
+                    ...$this->pnics($xpath, $props, $moref),
+                    ...$this->vmks($xpath, $props, $moref),
+                    ...$this->vswitches($xpath, $props, $moref),
+                    ...$this->portgroups($xpath, $props, $moref),
+                    ...$this->hbas($xpath, $props, $moref),
+                ];
+            }
+        );
+
+        // eachObject vraca po jedan unos za svaki host, a svaki je lista
+        // uredjaja; ovde se to spljosti u jednu listu.
+        $sve = [];
+
+        foreach ($poHostu as $uredjaji) {
+            foreach ($uredjaji as $uredjaj) {
+                $sve[] = $uredjaj;
+            }
+        }
+
+        return $sve;
+    }
+
+    /**
+     * Fizicke mrezne kartice.
+     *
+     * linkSpeed izostaje kada je link dole — tada ostaju i brzina i duplex
+     * prazni, sto je tacan opis stanja.
+     *
+     * @param array<string, DOMNode> $props
+     * @return list<array<string, mixed>>
+     */
+    private function pnics(DOMXPath $xpath, array $props, string $host): array
+    {
+        $rows = [];
+
+        foreach ($this->items($xpath, $props, 'config.network.pnic') as $el) {
+            $device = $this->text($xpath, './*[local-name()="device"]', $el);
+
+            if ($device === null) {
+                continue;
+            }
+
+            $rows[] = $this->compact([
+                'host_moref'       => $host,
+                'kind'             => 'pnic',
+                'device'           => $device,
+                'mac'              => $this->text($xpath, './*[local-name()="mac"]', $el),
+                'driver'           => $this->text($xpath, './*[local-name()="driver"]', $el),
+                'driver_version'   => $this->text($xpath, './*[local-name()="driverVersion"]', $el),
+                'firmware_version' => $this->text($xpath, './*[local-name()="firmwareVersion"]', $el),
+                'speed_mb'         => $this->text($xpath, './*[local-name()="linkSpeed"]/*[local-name()="speedMb"]', $el),
+                'duplex'           => $this->text($xpath, './*[local-name()="linkSpeed"]/*[local-name()="duplex"]', $el),
+                'pci'              => $this->text($xpath, './*[local-name()="pci"]', $el),
+            ]);
+        }
+
+        return $rows;
+    }
+
+    /**
+     * VMkernel adapteri. Tu su IP adrese hosta.
+     *
+     * @param array<string, DOMNode> $props
+     * @return list<array<string, mixed>>
+     */
+    private function vmks(DOMXPath $xpath, array $props, string $host): array
+    {
+        $rows = [];
+
+        foreach ($this->items($xpath, $props, 'config.network.vnic') as $el) {
+            $device = $this->text($xpath, './*[local-name()="device"]', $el);
+
+            if ($device === null) {
+                continue;
+            }
+
+            $spec = './*[local-name()="spec"]';
+
+            $rows[] = $this->compact([
+                'host_moref'  => $host,
+                'kind'        => 'vmk',
+                'device'      => $device,
+                'port_group'  => $this->text($xpath, './*[local-name()="portgroup"]', $el),
+                'ip_address'  => $this->text($xpath, $spec . '/*[local-name()="ip"]/*[local-name()="ipAddress"]', $el),
+                'subnet_mask' => $this->text($xpath, $spec . '/*[local-name()="ip"]/*[local-name()="subnetMask"]', $el),
+                'dhcp'        => $this->text($xpath, $spec . '/*[local-name()="ip"]/*[local-name()="dhcp"]', $el),
+                'gateway'     => $this->text(
+                    $xpath,
+                    $spec . '/*[local-name()="ipRouteSpec"]/*[local-name()="ipRouteConfig"]'
+                        . '/*[local-name()="defaultGateway"]',
+                    $el
+                ),
+                'mac'         => $this->text($xpath, $spec . '/*[local-name()="mac"]', $el),
+                'mtu'         => $this->text($xpath, $spec . '/*[local-name()="mtu"]', $el),
+            ]);
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Standardni svicevi.
+     *
+     * @param array<string, DOMNode> $props
+     * @return list<array<string, mixed>>
+     */
+    private function vswitches(DOMXPath $xpath, array $props, string $host): array
+    {
+        $rows = [];
+
+        foreach ($this->items($xpath, $props, 'config.network.vswitch') as $el) {
+            $name = $this->text($xpath, './*[local-name()="name"]', $el);
+
+            if ($name === null) {
+                continue;
+            }
+
+            $rows[] = $this->compact([
+                'host_moref'          => $host,
+                'kind'                => 'vswitch',
+                'device'              => $name,
+                'num_ports'           => $this->text($xpath, './*[local-name()="numPorts"]', $el),
+                'num_ports_available' => $this->text($xpath, './*[local-name()="numPortsAvailable"]', $el),
+                'mtu'                 => $this->text($xpath, './*[local-name()="mtu"]', $el),
+            ]);
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Standardne port grupe. Ime i VLAN stoje u spec bloku.
+     *
+     * @param array<string, DOMNode> $props
+     * @return list<array<string, mixed>>
+     */
+    private function portgroups(DOMXPath $xpath, array $props, string $host): array
+    {
+        $rows = [];
+
+        foreach ($this->items($xpath, $props, 'config.network.portgroup') as $el) {
+            $spec = './*[local-name()="spec"]';
+            $name = $this->text($xpath, $spec . '/*[local-name()="name"]', $el);
+
+            if ($name === null) {
+                continue;
+            }
+
+            $rows[] = $this->compact([
+                'host_moref'   => $host,
+                'kind'         => 'portgroup',
+                'device'       => $name,
+                // VLAN 0 je ispravna vrednost, pa se ne sme izgubiti kao prazna.
+                'vlan_id'      => $this->text($xpath, $spec . '/*[local-name()="vlanId"]', $el),
+                'vswitch_name' => $this->text($xpath, $spec . '/*[local-name()="vswitchName"]', $el),
+            ]);
+        }
+
+        return $rows;
+    }
+
+    /**
+     * HBA adapteri, sve cetiri podvrste.
+     *
+     * Podvrsta se cita iz xsi:type: HostFibreChannelHba nosi WWN-ove i
+     * brzinu u Gb, HostInternetScsiHba iSCSI ime, HostSerialAttachedHba samo
+     * nodeWorldWideName, HostParallelScsiHba nista posebno. Sve ostalo iz
+     * iSCSI adaptera (supportedAdvancedOptions, advancedOptions, sposobnosti)
+     * se preskace — to je najveci deo odgovora, a za evidenciju ne znaci
+     * nista.
+     *
+     * @param array<string, DOMNode> $props
+     * @return list<array<string, mixed>>
+     */
+    private function hbas(DOMXPath $xpath, array $props, string $host): array
+    {
+        $tipovi = [
+            'HostFibreChannelHba'   => 'fibreChannel',
+            'HostInternetScsiHba'   => 'iscsi',
+            'HostSerialAttachedHba' => 'serialAttached',
+            'HostParallelScsiHba'   => 'parallelScsi',
+            'HostBlockHba'          => 'block',
+        ];
+
+        $rows = [];
+
+        foreach ($this->items($xpath, $props, 'config.storageDevice.hostBusAdapter') as $el) {
+            $device = $this->text($xpath, './*[local-name()="device"]', $el);
+
+            if ($device === null) {
+                continue;
+            }
+
+            $xsiType = $el instanceof DOMElement
+                ? $el->getAttributeNS('http://www.w3.org/2001/XMLSchema-instance', 'type')
+                : '';
+
+            // Brzina FC adaptera stize u Gb; svodi se na Mb da bi kolona
+            // znacila isto i za mrezne kartice.
+            $gb = $this->text($xpath, './*[local-name()="speed"]', $el);
+
+            $rows[] = $this->compact([
+                'host_moref'       => $host,
+                'kind'             => 'hba',
+                'device'           => $device,
+                'hba_type'         => $tipovi[$xsiType] ?? ($xsiType !== '' ? $xsiType : null),
+                'model'            => $this->text($xpath, './*[local-name()="model"]', $el),
+                'driver'           => $this->text($xpath, './*[local-name()="driver"]', $el),
+                'status'           => $this->text($xpath, './*[local-name()="status"]', $el),
+                'pci'              => $this->text($xpath, './*[local-name()="pci"]', $el),
+                'storage_protocol' => $this->text($xpath, './*[local-name()="storageProtocol"]', $el),
+                'speed_mb'         => ($gb !== null && is_numeric($gb)) ? (string) ((int) $gb * 1000) : null,
+                'wwpn'             => $this->text($xpath, './*[local-name()="portWorldWideName"]', $el),
+                'wwnn'             => $this->text($xpath, './*[local-name()="nodeWorldWideName"]', $el),
+                'iscsi_name'       => $this->text($xpath, './*[local-name()="iScsiName"]', $el),
+            ]);
+        }
+
+        return $rows;
+    }
+
+    /**
+     * Stavke jednog niza iz propSet-a, ili prazno kada polje nije stiglo.
+     *
+     * @param array<string, DOMNode> $props
+     * @return list<DOMNode>
+     */
+    private function items(DOMXPath $xpath, array $props, string $property): array
+    {
+        if (!isset($props[$property])) {
+            return [];
+        }
+
+        $nodes = $xpath->query('./*[local-name()="val"]/*', $props[$property]);
+
+        return $nodes === false ? [] : iterator_to_array($nodes, false);
+    }
+
+    /**
+     * Izbaci polja koja vCenter nije vratio.
+     *
+     * Prazno polje i polje kog nema nisu ista stvar: maper tako razlikuje
+     * "nema podatka" od nule ili praznog stringa.
+     *
+     * @param array<string, mixed> $row
+     * @return array<string, mixed>
+     */
+    private function compact(array $row): array
+    {
+        return array_filter($row, static fn (mixed $v): bool => $v !== null && $v !== '');
     }
 
     // -----------------------------------------------------------------
