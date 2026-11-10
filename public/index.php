@@ -184,6 +184,7 @@ try {
         $router->get('/assetops/ci', $assetOps->ciRedirect(...));
         $router->get('/assetops/match', $assetOps->match(...));
         $router->get('/assetops/plan', $assetOps->planView(...));
+        $router->get('/assetops/journal', $assetOps->journal(...));
         $router->get('/assetops/mapping', $assetOps->mapping(...));
         $router->post('/assetops/{id}/refresh', $assetOps->refresh(...));
         $router->post('/assetops/{id}/mapping', $assetOps->saveMapping(...));
