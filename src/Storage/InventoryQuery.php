@@ -67,6 +67,20 @@ final class InventoryQuery
 
         $stmt = $this->pdo->prepare(
             'SELECT v.*,
+                    -- RAM u GB, izveden za mapiranje.
+                    --
+                    -- Deli se sa 1024, ne sa 1000: memorija se dodeljuje u
+                    -- stepenima dvojke, pa 4096 MiB jeste ono sto svi zovu
+                    -- 4 GB. Deljenje hiljadom dalo bi 4,096 — broj koji za
+                    -- RAM niko ne pise.
+                    --
+                    -- Ceo broj kada deli bez ostatka, inace jedna decimala:
+                    -- 2560 MiB je 2.5 GB i to se ne sme zaokruziti.
+                    CASE
+                        WHEN v.memory_mib IS NULL THEN NULL
+                        WHEN v.memory_mib % 1024 = 0 THEN CAST(v.memory_mib DIV 1024 AS CHAR)
+                        ELSE TRIM(TRAILING ".0" FROM CAST(ROUND(v.memory_mib / 1024, 1) AS CHAR))
+                    END AS memory_gb,
                     h.name AS host_name,
                     c.name AS cluster_name,
                     i.name AS integration_name
@@ -258,6 +272,21 @@ final class InventoryQuery
 
         $stmt = $this->pdo->prepare(
             'SELECT h.*,
+                    -- RAM u GB, izveden za mapiranje.
+                    --
+                    -- Deli se sa 1024, ne sa 1000: memorija se dodeljuje u
+                    -- stepenima dvojke, pa 137438953472 bajta jeste ono sto
+                    -- svi zovu 128 GB. Deljenje hiljadom dalo bi 137,4 —
+                    -- broj koji za RAM niko ne pise.
+                    --
+                    -- Ceo broj kada deli bez ostatka, inace jedna decimala:
+                    -- host sa isparcanom memorijom ne sme da se zaokrugli na
+                    -- okruglu vrednost koju nema.
+                    CASE
+                        WHEN h.memory_bytes IS NULL THEN NULL
+                        WHEN h.memory_bytes % 1073741824 = 0 THEN CAST(h.memory_bytes DIV 1073741824 AS CHAR)
+                        ELSE TRIM(TRAILING ".0" FROM CAST(ROUND(h.memory_bytes / 1073741824, 1) AS CHAR))
+                    END AS memory_gb,
                     c.name AS cluster_name,
                     i.name AS integration_name,
                     (SELECT COUNT(*) FROM vc_vm v
