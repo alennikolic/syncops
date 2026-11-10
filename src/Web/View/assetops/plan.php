@@ -12,7 +12,8 @@
 /** @var list<\SyncOps\Integration\Integration> $integrations */
 /** @var \SyncOps\Integration\Integration $integration */
 /** @var array<string, array<string, mixed>> $panels */
-/** @var list<array<string, mixed>> $journal */
+/** @var int $journalCount */
+/** @var int $journalFailed */
 /** @var bool $applied da li je ikada nešto upisano */
 /** @var string $csrf */
 
@@ -264,66 +265,20 @@ $show = static function (mixed $value) use ($e): string {
     <?php endif; ?>
 <?php endforeach; ?>
 
-<?php if ($journal !== []): ?>
-    <h2 class="section-head">Dnevnik upisa</h2>
-
-    <div class="panel">
-        <div class="table-scroll">
-            <table>
-                <thead>
-                    <tr><th>Kada</th><th>Objekat</th><th>Šta</th><th>Ishod</th><th>Poruka</th></tr>
-                </thead>
-                <tbody>
-                <?php foreach ($journal as $entry):
-                    $rail = match ($entry['status']) {
-                        'applied' => 'rail-ok',
-                        'skipped' => 'rail-idle',
-                        default   => 'rail-bad',
-                    };
-                ?>
-                    <tr>
-                        <td class="rail <?= $rail ?> data">
-                            <?= $e(substr((string) $entry['created_at'], 0, 16)) ?>
-                        </td>
-                        <td>
-                            <?= $e($entry['source_name']) ?>
-                            <?php if ($entry['ci_uuid'] !== null): ?>
-                                <div class="sub data muted"><?= $e($entry['ci_uuid']) ?></div>
-                            <?php endif; ?>
-                        </td>
-                        <td><?= $entry['action'] === 'create' ? 'kreiranje' : 'izmena' ?></td>
-                        <td class="<?= $entry['status'] === 'failed' ? 'state-bad' : '' ?>">
-                            <?= match ($entry['status']) {
-                                'applied' => 'upisano',
-                                'skipped' => 'preskočeno',
-                                default   => 'neuspelo',
-                            } ?>
-                            <?php if ($entry['http_status'] !== null): ?>
-                                <span class="sub data muted">HTTP <?= $e($entry['http_status']) ?></span>
-                            <?php endif; ?>
-                        </td>
-                        <td>
-                            <?= $e($entry['message'] ?? '—') ?>
-
-                            <?php if ($entry['status'] === 'failed' && ($entry['payload'] ?? null) !== null): ?>
-                                <?php // Kod neuspeha poruka servera cesto ne kaze dovoljno.
-                                      // Poslato telo je jedino mesto na kom se vidi sta je
-                                      // tacno otislo — i obicno odmah pokaze sta fali. ?>
-                                <details class="ref-list">
-                                    <summary>Poslato telo</summary>
-                                    <pre class="raw-full"><?= $e(json_encode(
-                                        json_decode((string) $entry['payload'], true),
-                                        JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES
-                                    )) ?></pre>
-                                </details>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
+<?php if ($journalCount > 0): ?>
+    <?php
+    // Dnevnik ima svoju stranicu: plan je predlog koji se racuna iznova i
+    // zivi samo na ekranu, a dnevnik je zapis o ucinjenom koji ostaje. Ovde
+    // stoji samo koliko ih ima i veza, da se ekran plana ne pretvori u dva
+    // ekrana u jednom.
+    ?>
+    <p class="note-block">
+        Do sada je zabeleženo <b><?= $e($journalCount) ?></b>
+        <?= $journalCount === 1 ? 'upis' : 'upisa' ?> u AssetOPS<?php if ($journalFailed > 0): ?>,
+        od toga <span class="state-bad"><?= $e($journalFailed) ?> neuspelih</span><?php endif; ?>.
+        Šta je tačno izmenjeno, po polju, stoji u
+        <a href="/assetops/journal?integration=<?= $e($integration->id) ?>">Dnevniku upisa</a>.
+    </p>
 <?php endif; ?>
 
 <p class="note-block">
