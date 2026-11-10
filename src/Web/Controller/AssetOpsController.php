@@ -16,6 +16,7 @@ namespace SyncOps\Web\Controller;
 use SyncOps\Integration\Integration;
 use SyncOps\Integration\IntegrationRepository;
 use SyncOps\Integration\IntegrationType;
+use SyncOps\Source\AssetOps\AssetOpsClient;
 use SyncOps\Source\AssetOps\AssetOpsException;
 use SyncOps\Source\AssetOps\CiCollector;
 use SyncOps\Source\AssetOps\ClientFactory;
@@ -301,15 +302,60 @@ final class AssetOpsController
             ];
         }
 
+        // Dnevnik ima svoju stranicu; ovde stoji samo koliko ih ima.
+        $counts = $this->journal->counts($selected->id);
+
         $this->view->render('assetops/plan', [
             'title'        => 'Plan',
             'nav'          => 'assetops-plan',
             'integrations' => $this->assetOpsIntegrations(),
             'integration'  => $selected,
             'panels'       => $panels,
-            'journal'      => $this->journal->recent($selected->id, 40),
+            'journalCount'  => array_sum($counts),
+            'journalFailed' => $counts['failed'],
             'applied'      => $this->journal->hasApplied($selected->id),
             'csrf'         => $this->auth->csrfToken(),
+        ]);
+    }
+
+    /**
+     * Dnevnik upisa u AssetOPS — svoja stranica.
+     *
+     * Odvojen od plana namerno: plan je predlog koji se računa iznova i živi
+     * samo na ekranu, a dnevnik je zapis o učinjenom koji ostaje. Dva
+     * različita pitanja, pa i dva ekrana.
+     */
+    public function journal(): void
+    {
+        $selected = $this->selectedOrEmpty('assetops-journal');
+
+        if ($selected === null) {
+            return;
+        }
+
+        $filters = [
+            'status' => (string) ($_GET['status'] ?? ''),
+            'action' => (string) ($_GET['action'] ?? ''),
+            'kind'   => (string) ($_GET['kind'] ?? ''),
+            'q'      => (string) ($_GET['q'] ?? ''),
+        ];
+
+        $perPage = 100;
+        $page    = max(1, (int) ($_GET['page'] ?? 1));
+
+        $total = $this->journal->countMatching($selected->id, $filters);
+
+        $this->view->render('assetops/journal', [
+            'title'        => 'Dnevnik upisa',
+            'nav'          => 'assetops-journal',
+            'integrations' => $this->assetOpsIntegrations(),
+            'integration'  => $selected,
+            'entries'      => $this->journal->search($selected->id, $filters, $perPage, ($page - 1) * $perPage),
+            'summary'      => $this->journal->summary($selected->id),
+            'filters'      => $filters,
+            'total'        => $total,
+            'page'         => $page,
+            'pages'        => max(1, (int) ceil($total / $perPage)),
         ]);
     }
 
@@ -408,11 +454,8 @@ final class AssetOpsController
         }
 
         try {
-            $applier = new Applier(
-                $this->factory->make($integration, $this->integrations->password($integration->id)),
-                $this->links,
-                $this->journal,
-            );
+            $client  = $this->factory->make($integration, $this->integrations->password($integration->id));
+            $applier = new Applier($client, $this->links, $this->journal);
 
             $allowance = $applier->allowance($integration->id);
 
@@ -426,7 +469,29 @@ final class AssetOpsController
                 limit: $allowance['limit'],
             );
 
-            $this->flash->success($this->applySummary($result, $allowance['pilot']));
+            $poruka = $this->applySummary($result, $allowance['pilot']);
+
+            // Zateceno stanje je upravo zastarelo — mi smo ga sami promenili.
+            // Bez ovoga bi plan i dalje predlagao ono sto je vec upisano, pa
+            // bi covek morao rucno na „Prikupi sada" pre sledeceg prolaza.
+            //
+            // Samo kada je nesto zaista otislo: prolaz u kom je sve
+            // preskoceno ili palo nije promenio nista u AssetOPS-u.
+            if ($result['created'] + $result['updated'] > 0) {
+                try {
+                    $this->collectCurrent($integration, $client);
+                    $poruka .= ' Zatečeno stanje je osveženo.';
+                } catch (Throwable $e) {
+                    // Upis je prosao; neuspelo citanje ne sme da ga prikaze
+                    // kao gresku. Posledica je samo da plan jos jednom
+                    // predlaze ono sto je vec upisano.
+                    error_log('SyncOPS osvezavanje posle upisa: ' . $e->getMessage());
+                    $poruka .= ' Zatečeno stanje NIJE osveženo (' . $e->getMessage()
+                        . ') — pokreni „Prikupi sada" pre sledećeg prolaza.';
+                }
+            }
+
+            $this->flash->success($poruka);
         } catch (AssetOpsException $e) {
             $this->flash->error($e->getMessage());
         } catch (Throwable $e) {
@@ -654,37 +719,7 @@ final class AssetOpsController
 
         try {
             $client = $this->factory->make($integration, $this->integrations->password($integration->id));
-            $data   = $this->collector->collect($client);
-
-            $parts = [];
-
-            foreach ($data as $kind => $rows) {
-                $stats   = $this->repo->storeKind($integration->id, $kind, $rows);
-                $parts[] = sprintf(
-                    '%s %d%s',
-                    $this->label($kind),
-                    $stats['seen'],
-                    $stats['new'] > 0 ? " (novo {$stats['new']})" : ''
-                );
-            }
-
-            // CI-jevi se citaju u istom prolazu. Referentni spiskovi su tek
-            // vokabular; bez zatecenog stanja odredista nema s cim da se
-            // poredi, pa dva dugmeta za dve polovine iste slike ne bi imala
-            // smisla.
-            //
-            // Kljuc spajanja se cita iz mapiranja PRE prikupljanja: tako se
-            // vrednost kljuca izvlaci u kolonu odmah, a ne naknadnim
-            // prolaskom kroz payload.
-            foreach ($this->cis->collect($client, $this->entityRefs($integration->id)) as $entity => $rows) {
-                $stats   = $this->repo->storeCi($integration->id, $entity, $rows);
-                $parts[] = sprintf(
-                    '%s %d%s',
-                    $this->label($entity),
-                    $stats['seen'],
-                    $stats['new'] > 0 ? " (novo {$stats['new']})" : ''
-                );
-            }
+            $parts  = $this->collectCurrent($integration, $client);
 
             $this->flash->success(sprintf(
                 'Prikupljeno iz „%s” u %d poziva — %s.',
@@ -700,6 +735,49 @@ final class AssetOpsController
         }
 
         header('Location: /assetops?integration=' . $integration->id);
+    }
+
+    /**
+     * Pročitaj zatečeno stanje iz AssetOPS-a i upiši ga.
+     *
+     * Isti posao koristi dugme „Prikupi sada" i osvežavanje posle upisa, pa
+     * stoji na jednom mestu. Prima gotovog klijenta umesto da ga pravi: posle
+     * upisa je sesija već otvorena, a nova bi bila još jedna prijava.
+     *
+     * @return list<string> Sažetak po vrsti, za poruku na ekranu
+     */
+    private function collectCurrent(Integration $integration, AssetOpsClient $client): array
+    {
+        $parts = [];
+
+        foreach ($this->collector->collect($client) as $kind => $rows) {
+            $stats   = $this->repo->storeKind($integration->id, $kind, $rows);
+            $parts[] = sprintf(
+                '%s %d%s',
+                $this->label($kind),
+                $stats['seen'],
+                $stats['new'] > 0 ? " (novo {$stats['new']})" : ''
+            );
+        }
+
+        // CI-jevi se citaju u istom prolazu. Referentni spiskovi su tek
+        // vokabular; bez zatecenog stanja odredista nema s cim da se poredi,
+        // pa dva dugmeta za dve polovine iste slike ne bi imala smisla.
+        //
+        // Kljuc spajanja se cita iz mapiranja PRE prikupljanja: tako se
+        // vrednost kljuca izvlaci u kolonu odmah, a ne naknadnim prolaskom
+        // kroz payload.
+        foreach ($this->cis->collect($client, $this->entityRefs($integration->id)) as $entity => $rows) {
+            $stats   = $this->repo->storeCi($integration->id, $entity, $rows);
+            $parts[] = sprintf(
+                '%s %d%s',
+                $this->label($entity),
+                $stats['seen'],
+                $stats['new'] > 0 ? " (novo {$stats['new']})" : ''
+            );
+        }
+
+        return $parts;
     }
 
     /**
