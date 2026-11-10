@@ -767,7 +767,13 @@ final class AssetOpsController
         // Kljuc spajanja se cita iz mapiranja PRE prikupljanja: tako se
         // vrednost kljuca izvlaci u kolonu odmah, a ne naknadnim prolaskom
         // kroz payload.
-        foreach ($this->cis->collect($client, $this->entityRefs($integration->id)) as $entity => $rows) {
+        $collected = $this->cis->collect(
+            $client,
+            $this->entityRefs($integration->id),
+            $this->describeUuids($integration->id)
+        );
+
+        foreach ($collected as $entity => $rows) {
             $stats   = $this->repo->storeCi($integration->id, $entity, $rows);
             $parts[] = sprintf(
                 '%s %d%s',
@@ -777,7 +783,63 @@ final class AssetOpsController
             );
         }
 
+        $failed = $this->cis->descriptionFailures();
+
+        if ($failed > 0) {
+            $parts[] = "opis nije pročitan za {$failed}";
+        }
+
         return $parts;
+    }
+
+    /**
+     * Kojim CI-jevima treba dopuniti opis iz rute pojedinacnog zapisa.
+     *
+     * Opis je jedino nativno polje koje ruta liste ne vraca, pa je jedino
+     * zbog kog se poziva zapis po zapisu. Da to ne postane poziv za svaki
+     * CI na svaki klik, spisak se seku dve kapije:
+     *
+     *   1. Opis mora da bude mapiran politikom kojoj zatecena vrednost
+     *      stvarno treba. „Ne diraj" se ne racuna, a „pri kreiranju"
+     *      Planner preskace pre citanja zatecenog stanja.
+     *   2. CI mora da bude spojen sa redom iz inventara. Nespojeni se tek
+     *      kreiraju — njihov zatecen opis nema s cim da se poredi.
+     *
+     * Ako opis nije mapiran, vraca se prazan spisak i nema ni jednog
+     * dodatnog poziva.
+     *
+     * Ako spisak jednog dana naraste na stotine, granica je `updated_at_from=`
+     * na ruti liste (radi, ali samo na nivou dana): tada se dopunjavaju samo
+     * CI-jevi koje je neko dirao od proslog prolaza.
+     *
+     * @return array<string, array<string, true>> entitet => {uuid: true}
+     */
+    private function describeUuids(int $integrationId): array
+    {
+        /** Politike kod kojih Planner zatecenu vrednost zaista cita. */
+        $trazi = ['if_empty', 'always'];
+
+        $byEntity = [];
+
+        foreach (FieldCatalog::ENTITY as $sourceKind => $entity) {
+            $byEntity[$entity] = [];
+
+            $rule = $this->repo->fieldMap($integrationId, $sourceKind)['native:description'] ?? null;
+
+            if ($rule === null || !in_array((string) ($rule['write_policy'] ?? 'never'), $trazi, true)) {
+                continue;
+            }
+
+            foreach ($this->links->bySourceKind($integrationId, $sourceKind) as $link) {
+                $uuid = trim((string) ($link['ci_uuid'] ?? ''));
+
+                if ($uuid !== '') {
+                    $byEntity[$entity][$uuid] = true;
+                }
+            }
+        }
+
+        return $byEntity;
     }
 
     /**
